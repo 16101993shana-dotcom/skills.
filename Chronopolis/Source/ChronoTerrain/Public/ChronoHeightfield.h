@@ -7,6 +7,17 @@
 #include "CoreMinimal.h"
 #include "Math/IntRect.h"
 
+/** How FChronoHeightfield::ConformToPath writes heights under the path. */
+enum class EChronoConformMode : uint8
+{
+	/** Set the ground under the path and blend the surroundings toward it. */
+	BlendAndSet,
+	/** Set the ground under the path, leave the surroundings untouched. */
+	Set,
+	/** Only lower the ground under the path, never raise it. */
+	Min
+};
+
 struct CHRONOTERRAIN_API FChronoHeightfield
 {
 public:
@@ -60,6 +71,14 @@ public:
 	 * ground over SkirtCm. Flatness is guaranteed inside the whole rectangle.
 	 */
 	FIntRect FlattenOrientedBox(const FVector2D& Center, const FVector2D& HalfExtentCm, float YawRadians, float TargetHeightCm, float SkirtCm);
+
+	/**
+	 * Shapes the ground under a ribbon that follows a 3D polyline (a road).
+	 * Every vertex closer than HalfWidthCm (plus one cell diagonal) to the path
+	 * gets the height of the nearest path point minus OffsetBelowCm. A single
+	 * point gives a disc (an intersection).
+	 */
+	FIntRect ConformToPath(TConstArrayView<FVector> Path, float HalfWidthCm, float OffsetBelowCm, float BlendCm, EChronoConformMode Mode);
 
 	/** Lowest and highest ground height under an oriented rectangle. Used to validate placements. */
 	void GetHeightRangeInOrientedBox(const FVector2D& Center, const FVector2D& HalfExtentCm, float YawRadians, float& OutMinCm, float& OutMaxCm) const;

@@ -302,6 +302,103 @@ FIntRect FChronoHeightfield::FlattenOrientedBox(const FVector2D& Center, const F
 	return Rect;
 }
 
+FIntRect FChronoHeightfield::ConformToPath(TConstArrayView<FVector> Path, float HalfWidthCm, float OffsetBelowCm, float BlendCm, EChronoConformMode Mode)
+{
+	if (!IsValid() || Path.Num() == 0 || HalfWidthCm <= 0.0f)
+	{
+		return FIntRect();
+	}
+
+	// Same reasoning as FlattenOrientedBox: vertices within one cell diagonal
+	// of the ribbon also take the path height, so the ground is exact under
+	// the whole ribbon and not only at grid vertices.
+	const float HardRadius = HalfWidthCm + CellSizeCm * UE_SQRT_2;
+	const float Blend = (Mode == EChronoConformMode::BlendAndSet) ? FMath::Max(BlendCm, 0.0f) : 0.0f;
+	const double Reach = HardRadius + Blend;
+	const FVector2D ReachVector(Reach, Reach);
+
+	FBox2D PathBounds(ForceInit);
+	for (const FVector& Point : Path)
+	{
+		PathBounds += FVector2D(Point.X, Point.Y);
+	}
+
+	const FIntRect Rect = ComputeVertexRect(PathBounds.Min - ReachVector, PathBounds.Max + ReachVector);
+	const int32 Width = Rect.Width();
+	const int32 Height = Rect.Height();
+	if (Width <= 0 || Height <= 0)
+	{
+		return FIntRect();
+	}
+
+	// For every vertex of the rectangle: distance to the path and path height
+	// at the nearest point.
+	TArray<float> BestDistance;
+	BestDistance.Init(TNumericLimits<float>::Max(), Width * Height);
+	TArray<float> BestHeight;
+	BestHeight.Init(0.0f, Width * Height);
+
+	const int32 NumPieces = FMath::Max(Path.Num() - 1, 1);
+	for (int32 Piece = 0; Piece < NumPieces; ++Piece)
+	{
+		const FVector& A = Path[Piece];
+		const FVector& B = Path[FMath::Min(Piece + 1, Path.Num() - 1)];
+		const FVector2D A2(A.X, A.Y);
+		const FVector2D B2(B.X, B.Y);
+		const FVector2D AB = B2 - A2;
+		const double LengthSquared = AB.SizeSquared();
+
+		const FVector2D PieceMin(FMath::Min(A2.X, B2.X), FMath::Min(A2.Y, B2.Y));
+		const FVector2D PieceMax(FMath::Max(A2.X, B2.X), FMath::Max(A2.Y, B2.Y));
+		const FIntRect PieceRect = ComputeVertexRect(PieceMin - ReachVector, PieceMax + ReachVector);
+
+		for (int32 Y = FMath::Max(PieceRect.Min.Y, Rect.Min.Y); Y < FMath::Min(PieceRect.Max.Y, Rect.Max.Y); ++Y)
+		{
+			for (int32 X = FMath::Max(PieceRect.Min.X, Rect.Min.X); X < FMath::Min(PieceRect.Max.X, Rect.Max.X); ++X)
+			{
+				const FVector2D Vertex = VertexToWorld(X, Y);
+				const double T = (LengthSquared > UE_DOUBLE_SMALL_NUMBER)
+					? FMath::Clamp(FVector2D::DotProduct(Vertex - A2, AB) / LengthSquared, 0.0, 1.0)
+					: 0.0;
+				const float Distance = static_cast<float>(FVector2D::Distance(Vertex, A2 + AB * T));
+
+				const int32 LocalIndex = (Y - Rect.Min.Y) * Width + (X - Rect.Min.X);
+				if (Distance < BestDistance[LocalIndex])
+				{
+					BestDistance[LocalIndex] = Distance;
+					BestHeight[LocalIndex] = static_cast<float>(FMath::Lerp(A.Z, B.Z, T));
+				}
+			}
+		}
+	}
+
+	for (int32 Y = Rect.Min.Y; Y < Rect.Max.Y; ++Y)
+	{
+		for (int32 X = Rect.Min.X; X < Rect.Max.X; ++X)
+		{
+			const int32 LocalIndex = (Y - Rect.Min.Y) * Width + (X - Rect.Min.X);
+			const float Distance = BestDistance[LocalIndex];
+			if (Distance > Reach)
+			{
+				continue;
+			}
+
+			const float Target = BestHeight[LocalIndex] - OffsetBelowCm;
+			float& HeightRef = Heights[Index(X, Y)];
+			if (Distance <= HardRadius)
+			{
+				HeightRef = (Mode == EChronoConformMode::Min) ? FMath::Min(HeightRef, Target) : Target;
+			}
+			else if (Blend > 0.0f)
+			{
+				HeightRef = FMath::Lerp(HeightRef, Target, SmoothFalloff(Distance - HardRadius, Blend));
+			}
+		}
+	}
+
+	return Rect;
+}
+
 void FChronoHeightfield::GetHeightRangeInOrientedBox(const FVector2D& Center, const FVector2D& HalfExtentCm, float YawRadians, float& OutMinCm, float& OutMaxCm) const
 {
 	OutMinCm = TNumericLimits<float>::Max();

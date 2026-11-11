@@ -1,5 +1,5 @@
-// Player controller: mouse cursor, simulation speed commands and the
-// terraforming brush used to validate the terrain in Phase 1.
+// Player controller: mouse cursor, simulation speed commands and the two
+// Phase 1 tools (terraforming brush, road drawing).
 
 #pragma once
 
@@ -7,9 +7,17 @@
 #include "GameFramework/PlayerController.h"
 #include "ChronoPlayerController.generated.h"
 
+class UChronoRoadProfile;
 class UInputAction;
 class UInputMappingContext;
 struct FInputActionValue;
+
+UENUM(BlueprintType)
+enum class EChronoToolMode : uint8
+{
+	Terraform,
+	Road
+};
 
 UCLASS()
 class CHRONOGAME_API AChronoPlayerController : public APlayerController
@@ -21,10 +29,28 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
+	virtual void PlayerTick(float DeltaTime) override;
 
 	/** Console: ChronoSetSpeed 0..3 (0 = pause, 1 = x1, 2 = fast, 3 = fastest). */
 	UFUNCTION(Exec)
 	void ChronoSetSpeed(int32 SpeedIndex);
+
+	/** Console: ChronoTool 0 (terraform) or 1 (road). */
+	UFUNCTION(Exec)
+	void ChronoTool(int32 ToolIndex);
+
+	/** Console: ChronoRoadCurve 0 (straight roads) or 1 (curved roads, three clicks). */
+	UFUNCTION(Exec)
+	void ChronoRoadCurve(int32 bEnabled);
+
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
+	void SetToolMode(EChronoToolMode NewMode);
+
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Tools")
+	EChronoToolMode GetToolMode() const { return ToolMode; }
+
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
+	void SetCurvedRoads(bool bInCurved);
 
 	/** World position of the ground under the mouse cursor. */
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Input")
@@ -34,20 +60,22 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> ToolMappingContext;
 
+	// ---- Terraform tool ----
+
 	/** Bool, held: raises the ground under the cursor. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Terraform")
 	TObjectPtr<UInputAction> RaiseAction;
 
 	/** Bool, held: lowers the ground under the cursor. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Terraform")
 	TObjectPtr<UInputAction> LowerAction;
 
 	/** Bool, held: levels the ground to the height where the press started. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Terraform")
 	TObjectPtr<UInputAction> FlattenAction;
 
 	/** Bool, held: smooths the ground under the cursor. */
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Terraform")
 	TObjectPtr<UInputAction> SmoothAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Terraform", meta = (ClampMin = "100.0"))
@@ -64,6 +92,28 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Terraform", meta = (ClampMin = "1000.0"))
 	float CursorTraceDistanceCm = 2000000.0f;
 
+	// ---- Road tool ----
+
+	/** Bool, pressed: places the next point of the road. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Road")
+	TObjectPtr<UInputAction> RoadPlaceAction;
+
+	/** Bool, pressed: cancels the road being drawn. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Road")
+	TObjectPtr<UInputAction> RoadCancelAction;
+
+	/** Bool, pressed: demolishes the road under the cursor. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Road")
+	TObjectPtr<UInputAction> RoadDemolishAction;
+
+	/** Type of road drawn by the road tool. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Road")
+	TObjectPtr<UChronoRoadProfile> RoadProfile;
+
+	/** Seconds a tool message stays on screen. */
+	UPROPERTY(EditDefaultsOnly, Category = "Road", meta = (ClampMin = "0.5"))
+	float MessageDurationSeconds = 4.0f;
+
 private:
 	void OnRaise(const FInputActionValue& Value);
 	void OnLower(const FInputActionValue& Value);
@@ -71,6 +121,23 @@ private:
 	void OnFlatten(const FInputActionValue& Value);
 	void OnSmooth(const FInputActionValue& Value);
 
+	void OnRoadPlace(const FInputActionValue& Value);
+	void OnRoadCancel(const FInputActionValue& Value);
+	void OnRoadDemolish(const FInputActionValue& Value);
+
+	void ResetRoadDrawing();
+	void ShowToolMessage(const FText& Message, bool bIsError) const;
+	void DrawRoadPreview() const;
+
+	EChronoToolMode ToolMode = EChronoToolMode::Terraform;
+
 	float FlattenTargetHeightCm = 0.0f;
 	bool bHasFlattenTarget = false;
+
+	// Road being drawn: start point, then (curved roads only) control point.
+	bool bCurvedRoads = false;
+	bool bHasRoadStart = false;
+	bool bHasRoadControl = false;
+	FVector2D RoadStart = FVector2D::ZeroVector;
+	FVector2D RoadControl = FVector2D::ZeroVector;
 };

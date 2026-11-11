@@ -77,6 +77,11 @@ void UChronoTerrainSubsystem::FlattenFootprint(FVector2D Center, FVector2D HalfE
 	NotifyChanged(Heightfield.FlattenOrientedBox(Center, HalfExtentCm, FMath::DegreesToRadians(YawDegrees), Target, SkirtCm));
 }
 
+void UChronoTerrainSubsystem::ConformToPath(TConstArrayView<FVector> Path, float HalfWidthCm, float OffsetBelowCm, float BlendCm, EChronoConformMode Mode)
+{
+	NotifyChanged(Heightfield.ConformToPath(Path, HalfWidthCm, OffsetBelowCm, BlendCm, Mode));
+}
+
 bool UChronoTerrainSubsystem::RaycastTerrain(FVector Origin, FVector Direction, float MaxDistanceCm, FVector& OutHit) const
 {
 	OutHit = FVector::ZeroVector;

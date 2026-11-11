@@ -73,11 +73,69 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Terrain")
 	bool bTerrainCollisionEnabled = true;
 
-	/** Safety valve: flip the triangle winding if the terrain is only visible from below. */
+	/** Safety valve: flip the triangle winding of every generated mesh (terrain, roads) if they are only visible from below. */
 	UPROPERTY(Config, EditAnywhere, Category = "Terrain")
 	bool bFlipTerrainWinding = false;
 
 	/** Material applied to terrain tiles. Empty uses the engine default material. */
 	UPROPERTY(Config, EditAnywhere, Category = "Terrain")
 	TSoftObjectPtr<UMaterialInterface> TerrainMaterial;
+
+	// ---- Roads ----
+
+	/** Two roads may not meet at a node with a smaller angle than this. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "10.0", ClampMax = "90.0"))
+	float RoadMinIntersectionAngleDegrees = 30.0f;
+
+	/** Maximum number of roads meeting at one node. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "3", ClampMax = "8"))
+	int32 RoadMaxNodeDegree = 6;
+
+	/** Minimum length of a segment between its two intersections. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "100.0"))
+	float RoadMinUsableLengthCm = 400.0f;
+
+	/** Smallest distance by which a segment is cut back at a node shared with another segment. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "1.0"))
+	float RoadMinTrimCm = 100.0f;
+
+	/** A road end closer than this to an existing node or road snaps onto it. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))
+	float RoadSnapDistanceCm = 800.0f;
+
+	/** Minimum free space between the edges of two roads that are not connected. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))
+	float RoadClearanceCm = 50.0f;
+
+	/** Distance between two cross-sections of a road mesh. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "25.0"))
+	float RoadSampleSpacingCm = 200.0f;
+
+	/** The ground is set this far below the road surface, so the two never z-fight. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "1.0"))
+	float RoadbedOffsetCm = 8.0f;
+
+	/** Depth of the side faces of a road mesh. Must be larger than RoadbedOffsetCm. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "5.0"))
+	float RoadSkirtDepthCm = 40.0f;
+
+	/** Width over which the ground blends from the roadbed back to the natural relief. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))
+	float RoadTerrainBlendCm = 800.0f;
+
+	/** Road meshes rebuilt per frame after an edit. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "1", ClampMax = "256"))
+	int32 MaxRoadMeshRebuildsPerFrame = 8;
+
+	/** Material slot 0: carriageway. Empty uses the engine default material. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads")
+	TSoftObjectPtr<UMaterialInterface> RoadSurfaceMaterial;
+
+	/** Material slot 1: sidewalks and curbs. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads")
+	TSoftObjectPtr<UMaterialInterface> RoadSidewalkMaterial;
+
+	/** Material slot 2: side faces and end caps. */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads")
+	TSoftObjectPtr<UMaterialInterface> RoadSideMaterial;
 };

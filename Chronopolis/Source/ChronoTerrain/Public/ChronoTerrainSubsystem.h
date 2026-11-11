@@ -58,6 +58,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Terrain")
 	bool RaycastTerrain(FVector Origin, FVector Direction, float MaxDistanceCm, FVector& OutHit) const;
 
+	/** Shapes the ground under a road or an intersection. See FChronoHeightfield::ConformToPath. */
+	void ConformToPath(TConstArrayView<FVector> Path, float HalfWidthCm, float OffsetBelowCm, float BlendCm, EChronoConformMode Mode);
+
 	/** Regenerates the initial relief from the project settings. */
 	void GenerateInitialTerrain(int32 Seed);
 
