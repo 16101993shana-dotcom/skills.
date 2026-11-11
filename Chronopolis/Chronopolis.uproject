@@ -1,0 +1,14 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "Chronopolis: one city, seven eras.",
+	"Modules": [
+		{ "Name": "ChronoCore", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoTerrain", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoGame", "Type": "Runtime", "LoadingPhase": "Default" }
+	],
+	"Plugins": [
+		{ "Name": "EnhancedInput", "Enabled": true }
+	]
+}
