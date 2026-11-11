@@ -41,7 +41,7 @@ public:
 
 	/** Console: ChronoRoadCurve 0 (straight roads) or 1 (curved roads, three clicks). */
 	UFUNCTION(Exec)
-	void ChronoRoadCurve(int32 bEnabled);
+	void ChronoRoadCurve(int32 Enabled);
 
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
 	void SetToolMode(EChronoToolMode NewMode);

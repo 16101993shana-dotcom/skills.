@@ -191,9 +191,9 @@ void AChronoPlayerController::ChronoTool(int32 ToolIndex)
 	SetToolMode(ToolIndex == 1 ? EChronoToolMode::Road : EChronoToolMode::Terraform);
 }
 
-void AChronoPlayerController::ChronoRoadCurve(int32 bEnabled)
+void AChronoPlayerController::ChronoRoadCurve(int32 Enabled)
 {
-	SetCurvedRoads(bEnabled != 0);
+	SetCurvedRoads(Enabled != 0);
 }
 
 void AChronoPlayerController::SetToolMode(EChronoToolMode NewMode)
