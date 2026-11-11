@@ -58,6 +58,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Terrain")
 	bool RaycastTerrain(FVector Origin, FVector Direction, float MaxDistanceCm, FVector& OutHit) const;
 
+	/**
+	 * Runs an edit on the heightfield and notifies listeners. The edit returns
+	 * the vertex rectangle it modified (Min inclusive, Max exclusive).
+	 */
+	void ApplyEdit(TFunctionRef<FIntRect(FChronoHeightfield&)> Edit);
+
 	/** Shapes the ground under a road or an intersection. See FChronoHeightfield::ConformToPath. */
 	void ConformToPath(TConstArrayView<FVector> Path, float HalfWidthCm, float OffsetBelowCm, float BlendCm, EChronoConformMode Mode);
 

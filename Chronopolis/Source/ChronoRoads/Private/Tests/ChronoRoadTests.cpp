@@ -6,6 +6,8 @@
 #include "ChronoRoadGraph.h"
 #include "ChronoRoadMeshBuilder.h"
 #include "Misc/AutomationTest.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/MemoryWriter.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -205,6 +207,21 @@ bool FChronoRoadJunctionMeshTest::RunTest(const FString& Parameters)
 		const double HeightAtMouth = Graph.GetSegmentHeightAtDistance(*BranchSegment, BranchSegment->TrimStart);
 		TestTrue(TEXT("Segment and junction meet at the same height"), FMath::IsNearlyEqual(HeightAtMouth, Graph.FindNode(Center)->Position.Z, 0.01));
 	}
+
+	// Save and load: the same network comes back, with the same derived data.
+	TArray<uint8> Bytes;
+	FMemoryWriter Writer(Bytes);
+	TestTrue(TEXT("Graph is saved"), Graph.Serialize(Writer));
+
+	FChronoRoadGraph Loaded;
+	Loaded.SetMinTrimCm(100.0f);
+	FMemoryReader Reader(Bytes);
+	TestTrue(TEXT("Graph is loaded"), Loaded.Serialize(Reader));
+	TestEqual(TEXT("Loaded graph has the same segments"), Loaded.GetSegments().Num(), Graph.GetSegments().Num());
+	TestEqual(TEXT("Loaded graph has the same nodes"), Loaded.GetNodes().Num(), Graph.GetNodes().Num());
+	const FChronoRoadSegment* LoadedBranch = Loaded.FindSegment(Branch);
+	TestTrue(TEXT("Loaded segment keeps its trim"), LoadedBranch && BranchSegment && FMath::IsNearlyEqual(LoadedBranch->TrimStart, BranchSegment->TrimStart, 0.01f));
+	TestTrue(TEXT("Loaded segment keeps its profile"), LoadedBranch && LoadedBranch->Profile.ProfileId == Profile.ProfileId);
 
 	// Removing the branch turns the junction back into a simple joint.
 	TestTrue(TEXT("Branch is removed"), Graph.RemoveSegment(Branch));

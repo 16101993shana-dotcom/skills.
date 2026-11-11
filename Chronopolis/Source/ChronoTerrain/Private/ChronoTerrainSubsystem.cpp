@@ -77,6 +77,11 @@ void UChronoTerrainSubsystem::FlattenFootprint(FVector2D Center, FVector2D HalfE
 	NotifyChanged(Heightfield.FlattenOrientedBox(Center, HalfExtentCm, FMath::DegreesToRadians(YawDegrees), Target, SkirtCm));
 }
 
+void UChronoTerrainSubsystem::ApplyEdit(TFunctionRef<FIntRect(FChronoHeightfield&)> Edit)
+{
+	NotifyChanged(Edit(Heightfield));
+}
+
 void UChronoTerrainSubsystem::ConformToPath(TConstArrayView<FVector> Path, float HalfWidthCm, float OffsetBelowCm, float BlendCm, EChronoConformMode Mode)
 {
 	NotifyChanged(Heightfield.ConformToPath(Path, HalfWidthCm, OffsetBelowCm, BlendCm, Mode));
@@ -163,28 +168,9 @@ void UChronoTerrainSubsystem::GenerateInitialTerrain(int32 Seed)
 	const UChronoSettings* Settings = UChronoSettings::Get();
 	Heightfield.Init(Settings->TerrainSizeCells, Settings->TerrainCellSizeCm, 0.0f);
 
-	const float Amplitude = Settings->TerrainNoiseAmplitudeCm;
-	if (Amplitude > 0.0f)
+	if (Settings->TerrainNoiseAmplitudeCm > 0.0f)
 	{
-		const double Wavelength = FMath::Max(100.0f, Settings->TerrainNoiseWavelengthCm);
-
-		// Deterministic offset derived from the seed, so the same seed gives the same map.
-		FRandomStream Stream(Seed);
-		const FVector2D Offset(Stream.FRandRange(-1000.0f, 1000.0f), Stream.FRandRange(-1000.0f, 1000.0f));
-
-		const int32 NumVerts = Heightfield.GetNumVertsPerSide();
-		for (int32 Y = 0; Y < NumVerts; ++Y)
-		{
-			for (int32 X = 0; X < NumVerts; ++X)
-			{
-				const FVector2D World = Heightfield.VertexToWorld(X, Y);
-				const FVector2D P = World / Wavelength + Offset;
-
-				// Two octaves of Perlin noise: broad relief plus gentle detail.
-				const float Noise = FMath::PerlinNoise2D(P) + 0.35f * FMath::PerlinNoise2D(P * 3.1);
-				Heightfield.SetVertexHeight(X, Y, FMath::Clamp(Noise * Amplitude, MinHeightCm, MaxHeightCm));
-			}
-		}
+		Heightfield.GenerateNoise(Seed, Settings->TerrainNoiseAmplitudeCm, Settings->TerrainNoiseWavelengthCm, MinHeightCm, MaxHeightCm);
 	}
 
 	NotifyChanged(GetFullRect());

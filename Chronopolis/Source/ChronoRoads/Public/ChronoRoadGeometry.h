@@ -79,6 +79,12 @@ namespace ChronoRoadGeometry
 
 	CHRONOROADS_API double DistancePointToPolyline(const FVector2D& Point, const TArray<FChronoRoadSample>& Samples);
 
+	/**
+	 * True if Point lies strictly inside the ribbon of half width HalfWidthCm
+	 * that follows a polyline (the ends of the ribbon are cut square).
+	 */
+	CHRONOROADS_API bool IsPointInsideRibbon(const FVector2D& Point, const TArray<FChronoRoadSample>& Samples, double HalfWidthCm);
+
 	/** Indices of the arms sorted counterclockwise (increasing atan2 of the direction). */
 	CHRONOROADS_API void SortArmsCounterClockwise(const TArray<FChronoRoadArm>& Arms, TArray<int32>& OutOrder);
 

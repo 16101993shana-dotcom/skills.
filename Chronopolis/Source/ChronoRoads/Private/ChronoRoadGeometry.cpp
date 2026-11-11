@@ -303,6 +303,46 @@ double ChronoRoadGeometry::DistancePointToPolyline(const FVector2D& Point, const
 	return FMath::Sqrt(BestSquared);
 }
 
+bool ChronoRoadGeometry::IsPointInsideRibbon(const FVector2D& Point, const TArray<FChronoRoadSample>& Samples, double HalfWidthCm)
+{
+	if (Samples.Num() < 2 || HalfWidthCm <= 0.0)
+	{
+		return false;
+	}
+
+	const double LimitSquared = HalfWidthCm * HalfWidthCm;
+
+	// Inside one of the straight pieces: the foot of the perpendicular falls
+	// within the piece (so nothing beyond the square ends counts).
+	for (int32 Index = 1; Index < Samples.Num(); ++Index)
+	{
+		const FVector2D& A = Samples[Index - 1].Position;
+		const FVector2D AB = Samples[Index].Position - A;
+		const double LengthSquared = AB.SizeSquared();
+		if (LengthSquared <= UE_DOUBLE_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		const double T = FVector2D::DotProduct(Point - A, AB) / LengthSquared;
+		if (T >= 0.0 && T <= 1.0 && FVector2D::DistSquared(Point, A + AB * T) < LimitSquared)
+		{
+			return true;
+		}
+	}
+
+	// Inside the wedge between two pieces, on the outside of a bend.
+	for (int32 Index = 1; Index < Samples.Num() - 1; ++Index)
+	{
+		if (FVector2D::DistSquared(Point, Samples[Index].Position) < LimitSquared)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void ChronoRoadGeometry::SortArmsCounterClockwise(const TArray<FChronoRoadArm>& Arms, TArray<int32>& OutOrder)
 {
 	OutOrder.Reset(Arms.Num());

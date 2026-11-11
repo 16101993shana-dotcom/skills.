@@ -7,6 +7,8 @@
 		{ "Name": "ChronoCore", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoTerrain", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoRoads", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoAudit", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoSave", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoGame", "Type": "Runtime", "LoadingPhase": "Default" }
 	],
 	"Plugins": [

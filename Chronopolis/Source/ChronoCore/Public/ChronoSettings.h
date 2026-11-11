@@ -103,21 +103,37 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))
 	float RoadSnapDistanceCm = 800.0f;
 
-	/** Minimum free space between the edges of two roads that are not connected. */
+	/**
+	 * Minimum free space between the edges of two roads that are not connected.
+	 * Keep it above three terrain cells: closer roads at different heights
+	 * would need a ground step that the terrain grid cannot represent.
+	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))
-	float RoadClearanceCm = 50.0f;
+	float RoadClearanceCm = 600.0f;
+
+	/**
+	 * A road stays level over this distance after leaving a junction, so that
+	 * neighboring roads are apart before their heights start to differ.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))
+	float RoadJunctionLevelRunCm = 600.0f;
 
 	/** Distance between two cross-sections of a road mesh. */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "25.0"))
 	float RoadSampleSpacingCm = 200.0f;
 
-	/** The ground is set this far below the road surface, so the two never z-fight. */
+	/**
+	 * The ground is set this far below the road surface, so the two never
+	 * z-fight. Where the grade of a road changes, the terrain grid can sit up to
+	 * (grade x cell size / 2) above the ideal roadbed: keep this offset larger
+	 * than that (15 cm for a 15 % grade on 2 m cells).
+	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "1.0"))
-	float RoadbedOffsetCm = 8.0f;
+	float RoadbedOffsetCm = 20.0f;
 
 	/** Depth of the side faces of a road mesh. Must be larger than RoadbedOffsetCm. */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "5.0"))
-	float RoadSkirtDepthCm = 40.0f;
+	float RoadSkirtDepthCm = 60.0f;
 
 	/** Width over which the ground blends from the roadbed back to the natural relief. */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))

@@ -5,13 +5,12 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "ChronoRoadBuilder.h"
 #include "ChronoRoadGraph.h"
 #include "ChronoRoadTypes.h"
 #include "ChronoRoadSubsystem.generated.h"
 
 class AChronoRoadNetworkActor;
-struct FChronoHeightfield;
-
 DECLARE_MULTICAST_DELEGATE_OneParam(FChronoOnRoadNetworkChanged, const FChronoRoadChangeSet&);
 
 UCLASS()
@@ -55,20 +54,14 @@ public:
 
 	FChronoOnRoadNetworkChanged OnRoadNetworkChanged;
 
+	/** Save and load. Loading replaces the whole network. Returns false on invalid data. */
+	bool SerializeRoads(FArchive& Ar);
+
 private:
-	/** Applies the request to InOutGraph and checks every rule. */
-	EChronoRoadBuildResult ApplyAndValidate(FChronoRoadGraph& InOutGraph, const FChronoRoadBuildRequest& Request, int32& OutSegmentId) const;
-
-	/** Finds or creates the node for one end of a new road. */
-	int32 ResolveEndpoint(FChronoRoadGraph& InOutGraph, const FVector2D& Point, const FChronoHeightfield& Heightfield) const;
-
-	EChronoRoadBuildResult ValidateChanges(const FChronoRoadGraph& InGraph, int32 NewSegmentId, const FChronoHeightfield& Heightfield) const;
-	bool OverlapsOtherRoad(const FChronoRoadGraph& InGraph, const FChronoRoadSegment& NewSegment) const;
-
 	/** Shapes the terrain, notifies listeners and clears the change tracking of the graph. */
 	void CommitChanges();
-	void ConformTerrain(const FChronoRoadChangeSet& Changes);
 
+	FChronoRoadRules Rules;
 	FChronoRoadGraph Graph;
 
 	UPROPERTY(Transient)

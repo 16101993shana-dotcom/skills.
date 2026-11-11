@@ -15,6 +15,30 @@ void FChronoHeightfield::Init(int32 InSizeCells, float InCellSizeCm, float Initi
 	Heights.Init(InitialHeightCm, NumVerts * NumVerts);
 }
 
+void FChronoHeightfield::GenerateNoise(int32 Seed, float AmplitudeCm, float WavelengthCm, float MinHeightCm, float MaxHeightCm)
+{
+	const double Wavelength = FMath::Max(100.0f, WavelengthCm);
+
+	// Deterministic offset derived from the seed, so the same seed gives the same map.
+	FRandomStream Stream(Seed);
+	const double OffsetX = Stream.FRandRange(-1000.0f, 1000.0f);
+	const double OffsetY = Stream.FRandRange(-1000.0f, 1000.0f);
+	const FVector2D Offset(OffsetX, OffsetY);
+
+	const int32 NumVerts = GetNumVertsPerSide();
+	for (int32 Y = 0; Y < NumVerts; ++Y)
+	{
+		for (int32 X = 0; X < NumVerts; ++X)
+		{
+			const FVector2D P = VertexToWorld(X, Y) / Wavelength + Offset;
+
+			// Broad relief plus gentle detail.
+			const float Noise = FMath::PerlinNoise2D(P) + 0.35f * FMath::PerlinNoise2D(P * 3.1);
+			Heights[Index(X, Y)] = FMath::Clamp(Noise * AmplitudeCm, MinHeightCm, MaxHeightCm);
+		}
+	}
+}
+
 bool FChronoHeightfield::IsInsideWorld(const FVector2D& WorldXY) const
 {
 	const FVector2D Origin = GetOrigin();

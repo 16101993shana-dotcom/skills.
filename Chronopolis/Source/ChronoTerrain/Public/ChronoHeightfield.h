@@ -24,6 +24,9 @@ public:
 	/** Allocates a square grid of InSizeCells x InSizeCells cells, centered on the world origin. */
 	void Init(int32 InSizeCells, float InCellSizeCm, float InitialHeightCm);
 
+	/** Replaces all heights by a deterministic relief (two octaves of Perlin noise). */
+	void GenerateNoise(int32 Seed, float AmplitudeCm, float WavelengthCm, float MinHeightCm, float MaxHeightCm);
+
 	bool IsValid() const { return SizeCells > 0 && Heights.Num() == GetNumVertsPerSide() * GetNumVertsPerSide(); }
 
 	int32 GetSizeCells() const { return SizeCells; }

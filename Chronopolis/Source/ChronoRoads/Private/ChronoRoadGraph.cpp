@@ -280,6 +280,11 @@ float FChronoRoadGraph::GetNodeRadiusCm(int32 NodeId) const
 	return Radius;
 }
 
+double FChronoRoadGraph::GetSlopedLength(const FChronoRoadSegment& Segment) const
+{
+	return Segment.GetUsableLength() - 2.0 * LevelRunCm;
+}
+
 double FChronoRoadGraph::GetSegmentHeightAtDistance(const FChronoRoadSegment& Segment, double Distance) const
 {
 	const FChronoRoadNode* StartNode = Nodes.Find(Segment.StartNodeId);
@@ -291,14 +296,16 @@ double FChronoRoadGraph::GetSegmentHeightAtDistance(const FChronoRoadSegment& Se
 
 	const double StartHeight = StartNode->Position.Z;
 	const double EndHeight = EndNode->Position.Z;
-	const double Usable = Segment.GetUsableLength();
-	if (Usable <= 1.0)
+	const double Sloped = GetSlopedLength(Segment);
+	if (Sloped <= 1.0)
 	{
 		return (Distance < 0.5 * Segment.Length) ? StartHeight : EndHeight;
 	}
 
-	// Level inside both junctions, constant grade in between.
-	const double Alpha = FMath::Clamp((Distance - Segment.TrimStart) / Usable, 0.0, 1.0);
+	// Level inside both junctions and over the level run after each of them,
+	// constant grade in between.
+	const double SlopeStart = Segment.TrimStart + LevelRunCm;
+	const double Alpha = FMath::Clamp((Distance - SlopeStart) / Sloped, 0.0, 1.0);
 	return FMath::Lerp(StartHeight, EndHeight, Alpha);
 }
 
@@ -311,8 +318,10 @@ double FChronoRoadGraph::GetSegmentSlopePercent(const FChronoRoadSegment& Segmen
 		return 0.0;
 	}
 
-	const double Usable = FMath::Max(Segment.GetUsableLength(), 1.0);
-	return 100.0 * FMath::Abs(EndNode->Position.Z - StartNode->Position.Z) / Usable;
+	// A segment too short to hold a grade must be level: any height
+	// difference then reads as an impossible slope and is refused.
+	const double Sloped = FMath::Max(GetSlopedLength(Segment), 1.0);
+	return 100.0 * FMath::Abs(EndNode->Position.Z - StartNode->Position.Z) / Sloped;
 }
 
 void FChronoRoadGraph::BuildSegmentPath(const FChronoRoadSegment& Segment, double SpacingCm, TArray<FVector>& OutPath) const
@@ -333,4 +342,152 @@ void FChronoRoadGraph::ClearChanges()
 	DirtyNodes.Reset();
 	RemovedSegments.Reset();
 	RemovedNodes.Reset();
+}
+
+bool FChronoRoadGraph::Serialize(FArchive& Ar)
+{
+	// Bump when the binary layout changes.
+	const int32 CurrentVersion = 1;
+	// Sanity bound on counts read from a file.
+	const int32 MaxCount = 4 * 1024 * 1024;
+
+	int32 Version = CurrentVersion;
+	Ar << Version;
+	if (Ar.IsLoading() && Version != CurrentVersion)
+	{
+		Ar.SetError();
+		return false;
+	}
+
+	if (Ar.IsLoading())
+	{
+		Nodes.Reset();
+		Segments.Reset();
+		ClearChanges();
+	}
+
+	Ar << NextNodeId;
+	Ar << NextSegmentId;
+
+	// Saved in id order so that the same graph always gives the same bytes.
+	TArray<int32> NodeIds;
+	Nodes.GetKeys(NodeIds);
+	NodeIds.Sort();
+	int32 NumNodes = NodeIds.Num();
+	Ar << NumNodes;
+
+	TArray<int32> SegmentIds;
+	Segments.GetKeys(SegmentIds);
+	SegmentIds.Sort();
+	int32 NumSegments = SegmentIds.Num();
+	Ar << NumSegments;
+
+	bool bValid = !Ar.IsError() && NumNodes >= 0 && NumNodes <= MaxCount && NumSegments >= 0 && NumSegments <= MaxCount;
+
+	for (int32 Index = 0; bValid && Index < NumNodes; ++Index)
+	{
+		FChronoRoadNode Node;
+		if (Ar.IsSaving())
+		{
+			Node = Nodes.FindChecked(NodeIds[Index]);
+		}
+
+		Ar << Node.Id;
+		Ar << Node.Position;
+		Ar << Node.SegmentIds;
+
+		if (Ar.IsLoading())
+		{
+			bValid = !Ar.IsError() && Node.Id > 0 && !Nodes.Contains(Node.Id);
+			if (bValid)
+			{
+				Nodes.Add(Node.Id, MoveTemp(Node));
+			}
+		}
+	}
+
+	for (int32 Index = 0; bValid && Index < NumSegments; ++Index)
+	{
+		FChronoRoadSegment Segment;
+		FString ProfileId;
+		if (Ar.IsSaving())
+		{
+			Segment = Segments.FindChecked(SegmentIds[Index]);
+			ProfileId = Segment.Profile.ProfileId.ToString();
+		}
+
+		Ar << Segment.Id;
+		Ar << Segment.StartNodeId;
+		Ar << Segment.EndNodeId;
+		Ar << Segment.Curve.P0;
+		Ar << Segment.Curve.P1;
+		Ar << Segment.Curve.P2;
+		Ar << Segment.Curve.P3;
+		Ar << ProfileId;
+		Ar << Segment.Profile.CarriagewayWidthCm;
+		Ar << Segment.Profile.SidewalkWidthCm;
+		Ar << Segment.Profile.CurbHeightCm;
+		Ar << Segment.Profile.LanesPerDirection;
+		Ar << Segment.Profile.bOneWay;
+		Ar << Segment.Profile.MaxSlopePercent;
+		Ar << Segment.Profile.MinCurveRadiusCm;
+
+		if (Ar.IsLoading())
+		{
+			bValid = !Ar.IsError()
+				&& Segment.Id > 0
+				&& !Segments.Contains(Segment.Id)
+				&& Segment.StartNodeId != Segment.EndNodeId
+				&& Nodes.Contains(Segment.StartNodeId)
+				&& Nodes.Contains(Segment.EndNodeId)
+				&& Segment.Profile.CarriagewayWidthCm > 0.0f;
+			if (bValid)
+			{
+				Segment.Profile.ProfileId = FName(*ProfileId);
+				RefreshSegmentMetrics(Segment);
+				Segments.Add(Segment.Id, MoveTemp(Segment));
+			}
+		}
+	}
+
+	if (Ar.IsLoading())
+	{
+		// Every node must list exactly the segments that end on it.
+		for (const TPair<int32, FChronoRoadNode>& Pair : Nodes)
+		{
+			for (const int32 SegmentId : Pair.Value.SegmentIds)
+			{
+				const FChronoRoadSegment* Segment = Segments.Find(SegmentId);
+				bValid = bValid && Segment && (Segment->StartNodeId == Pair.Key || Segment->EndNodeId == Pair.Key);
+			}
+		}
+		for (const TPair<int32, FChronoRoadSegment>& Pair : Segments)
+		{
+			bValid = bValid
+				&& Nodes.FindChecked(Pair.Value.StartNodeId).SegmentIds.Contains(Pair.Key)
+				&& Nodes.FindChecked(Pair.Value.EndNodeId).SegmentIds.Contains(Pair.Key);
+		}
+
+		if (!bValid)
+		{
+			Nodes.Reset();
+			Segments.Reset();
+			NextNodeId = 1;
+			NextSegmentId = 1;
+			Ar.SetError();
+			return false;
+		}
+
+		// Trims are derived data: recompute them instead of trusting the file.
+		TArray<int32> LoadedNodeIds;
+		Nodes.GetKeys(LoadedNodeIds);
+		LoadedNodeIds.Sort();
+		for (const int32 NodeId : LoadedNodeIds)
+		{
+			RecomputeNodeTrims(NodeId);
+		}
+		ClearChanges();
+	}
+
+	return !Ar.IsError();
 }

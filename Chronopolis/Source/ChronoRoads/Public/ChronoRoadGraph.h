@@ -49,6 +49,9 @@ public:
 	/** Smallest trim applied where two or more segments meet. Set once from the project settings. */
 	void SetMinTrimCm(float InMinTrimCm) { MinTrimCm = InMinTrimCm; }
 
+	/** Distance over which a road stays level after leaving a junction. Set once from the project settings. */
+	void SetJunctionLevelRunCm(float InLevelRunCm) { LevelRunCm = FMath::Max(InLevelRunCm, 0.0f); }
+
 	int32 AddNode(const FVector& Position);
 
 	/** Adds a segment between two existing nodes. Returns INDEX_NONE on invalid input. */
@@ -86,15 +89,25 @@ public:
 
 	/**
 	 * Height of the road surface at a distance from the start node. The road is
-	 * level inside each junction and has a constant grade in between.
+	 * level inside each junction and over the level run that follows it, and has
+	 * a constant grade in between.
 	 */
 	double GetSegmentHeightAtDistance(const FChronoRoadSegment& Segment, double Distance) const;
+
+	/** Length of the part of a segment that carries the grade. */
+	double GetSlopedLength(const FChronoRoadSegment& Segment) const;
 
 	/** Grade of the sloped part of a segment, in percent. */
 	double GetSegmentSlopePercent(const FChronoRoadSegment& Segment) const;
 
 	/** Centerline of a whole segment as 3D points, node to node. */
 	void BuildSegmentPath(const FChronoRoadSegment& Segment, double SpacingCm, TArray<FVector>& OutPath) const;
+
+	/**
+	 * Binary serialization for save games (both directions). Loading replaces
+	 * the whole graph and returns false, leaving it empty, on invalid data.
+	 */
+	bool Serialize(FArchive& Ar);
 
 	// ---- Change tracking (consumed by UChronoRoadSubsystem) ----
 
@@ -114,6 +127,7 @@ private:
 	int32 NextNodeId = 1;
 	int32 NextSegmentId = 1;
 	float MinTrimCm = 100.0f;
+	float LevelRunCm = 0.0f;
 
 	TSet<int32> DirtySegments;
 	TSet<int32> DirtyNodes;
