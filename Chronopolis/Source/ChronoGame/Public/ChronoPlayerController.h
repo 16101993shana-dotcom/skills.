@@ -5,6 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "ChronoZoneGrid.h"
 #include "ChronoPlayerController.generated.h"
 
 class UChronoRoadProfile;
@@ -16,7 +17,8 @@ UENUM(BlueprintType)
 enum class EChronoToolMode : uint8
 {
 	Terraform,
-	Road
+	Road,
+	Zone
 };
 
 UCLASS()
@@ -35,7 +37,7 @@ public:
 	UFUNCTION(Exec)
 	void ChronoSetSpeed(int32 SpeedIndex);
 
-	/** Console: ChronoTool 0 (terraform) or 1 (road). */
+	/** Console: ChronoTool 0 (terraform), 1 (road) or 2 (zoning). */
 	UFUNCTION(Exec)
 	void ChronoTool(int32 ToolIndex);
 
@@ -43,8 +45,16 @@ public:
 	UFUNCTION(Exec)
 	void ChronoRoadCurve(int32 Enabled);
 
+	/** Console: ChronoZone 1..5 (residential, commercial, industrial, agricultural, civic). */
+	UFUNCTION(Exec)
+	void ChronoZone(int32 ZoneIndex);
+
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
 	void SetToolMode(EChronoToolMode NewMode);
+
+	/** Zone type painted by the zoning tool. */
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
+	void SetPaintZone(EChronoZoneType NewZone);
 
 	UFUNCTION(BlueprintPure, Category = "Chronopolis|Tools")
 	EChronoToolMode GetToolMode() const { return ToolMode; }
@@ -110,6 +120,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Road")
 	TObjectPtr<UChronoRoadProfile> RoadProfile;
 
+	// ---- Zoning tool ----
+	// The zoning tool reuses the terraform inputs: the raise input paints the
+	// selected zone, the lower input removes the zone.
+
+	UPROPERTY(EditDefaultsOnly, Category = "Zoning", meta = (ClampMin = "100.0"))
+	float ZoneBrushRadiusCm = 1200.0f;
+
 	/** Seconds a tool message stays on screen. */
 	UPROPERTY(EditDefaultsOnly, Category = "Road", meta = (ClampMin = "0.5"))
 	float MessageDurationSeconds = 4.0f;
@@ -129,7 +146,10 @@ private:
 	void ShowToolMessage(const FText& Message, bool bIsError) const;
 	void DrawRoadPreview() const;
 
+	void PaintZoneUnderCursor(EChronoZoneType Zone);
+
 	EChronoToolMode ToolMode = EChronoToolMode::Terraform;
+	EChronoZoneType PaintZone = EChronoZoneType::Residential;
 
 	float FlattenTargetHeightCm = 0.0f;
 	bool bHasFlattenTarget = false;

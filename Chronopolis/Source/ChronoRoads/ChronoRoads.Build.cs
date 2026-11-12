@@ -18,8 +18,8 @@ public class ChronoRoads : ModuleRules
 		// GeometryCore: FDynamicMesh3. GeometryFramework: UDynamicMeshComponent.
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"GeometryCore",
-			"GeometryFramework"
+			"GeometryFramework",
+			"ChronoRender"
 		});
 	}
 }

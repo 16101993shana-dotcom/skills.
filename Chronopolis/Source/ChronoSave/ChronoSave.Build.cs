@@ -13,7 +13,8 @@ public class ChronoSave : ModuleRules
 			"Engine",
 			"ChronoCore",
 			"ChronoTerrain",
-			"ChronoRoads"
+			"ChronoRoads",
+			"ChronoZoning"
 		});
 	}
 }

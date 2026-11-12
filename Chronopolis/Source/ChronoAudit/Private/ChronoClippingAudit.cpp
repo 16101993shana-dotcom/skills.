@@ -5,6 +5,7 @@
 #include "ChronoRoadGeometry.h"
 #include "ChronoRoadGraph.h"
 #include "ChronoRoadMeshBuilder.h"
+#include "ChronoZoneGrid.h"
 
 namespace ChronoAuditRule
 {
@@ -15,6 +16,9 @@ namespace ChronoAuditRule
 	const FName SegmentSwallowed(TEXT("SegmentSwallowed"));
 	const FName JunctionMesh(TEXT("JunctionMesh"));
 	const FName JunctionStep(TEXT("JunctionStep"));
+	const FName ZoneCellOnRoad(TEXT("ZoneCellOnRoad"));
+	const FName ZoneCellOverlap(TEXT("ZoneCellOverlap"));
+	const FName ZoneCellOrphan(TEXT("ZoneCellOrphan"));
 }
 
 namespace ChronoClippingAuditPrivate
@@ -289,4 +293,85 @@ int32 ChronoClippingAudit::Run(const FChronoHeightfield& Heightfield, const FChr
 	AuditJunctions(Context);
 	AuditRoadOverlaps(Context);
 	return Context.NumAdded;
+}
+
+int32 ChronoClippingAudit::RunZoning(const FChronoRoadGraph& Graph, const FChronoZoneGrid& Grid, const FChronoZoningRules& ZoningRules, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues)
+{
+	int32 NumAdded = 0;
+	auto Add = [&OutIssues, &Settings, &NumAdded](const FName& Rule, const FVector2D& Where, FString&& Description)
+	{
+		if (OutIssues.Num() < Settings.MaxIssues)
+		{
+			FChronoAuditIssue& Issue = OutIssues.AddDefaulted_GetRef();
+			Issue.Rule = Rule;
+			Issue.Location = FVector(Where.X, Where.Y, 0.0);
+			Issue.Description = MoveTemp(Description);
+			++NumAdded;
+		}
+	};
+
+	// In id order, so the report is the same from one run to the next.
+	TArray<int32> CellIds;
+	Grid.GetCells().GetKeys(CellIds);
+	CellIds.Sort();
+
+	// The audit does not trust the spatial index of the grid: it files the
+	// cells in its own buckets, so a broken index cannot hide an overlap.
+	const double BucketSize = 2.0 * FMath::Max(Grid.GetCellSizeCm(), 1.0f);
+	auto BucketOf = [BucketSize](const FVector2D& Point)
+	{
+		return FIntPoint(FMath::FloorToInt32(Point.X / BucketSize), FMath::FloorToInt32(Point.Y / BucketSize));
+	};
+	TMap<FIntPoint, TArray<int32>> Buckets;
+	for (const int32 CellId : CellIds)
+	{
+		Buckets.FindOrAdd(BucketOf(Grid.GetCells().FindChecked(CellId).Center)).Add(CellId);
+	}
+
+	for (const int32 CellId : CellIds)
+	{
+		if (OutIssues.Num() >= Settings.MaxIssues)
+		{
+			break;
+		}
+
+		const FChronoZoneCell& Cell = Grid.GetCells().FindChecked(CellId);
+		const FChronoOrientedBox2D Box = Grid.GetCellBox(Cell);
+
+		if (!Graph.FindSegment(Cell.SegmentId))
+		{
+			Add(ChronoAuditRule::ZoneCellOrphan, Cell.Center, FString::Printf(TEXT("Cell %d fronts on missing segment %d"), Cell.Id, Cell.SegmentId));
+			continue;
+		}
+
+		// A cell may come as close to a road as the rules allow, not closer.
+		// Half of the allowed clearance leaves room for numerical noise.
+		if (!ChronoZoning::IsBoxClearOfRoads(Graph, Box, 0.5 * ZoningRules.RoadClearanceCm, ZoningRules.RoadSampleSpacingCm))
+		{
+			Add(ChronoAuditRule::ZoneCellOnRoad, Cell.Center, FString::Printf(TEXT("Cell %d (segment %d, slot %d, row %d) touches a road or a junction"), Cell.Id, Cell.SegmentId, Cell.Slot, Cell.Row));
+		}
+
+		// Each pair is tested once: only against cells with a higher id.
+		const FIntPoint Home = BucketOf(Cell.Center);
+		for (int32 Y = Home.Y - 1; Y <= Home.Y + 1; ++Y)
+		{
+			for (int32 X = Home.X - 1; X <= Home.X + 1; ++X)
+			{
+				const TArray<int32>* Bucket = Buckets.Find(FIntPoint(X, Y));
+				if (!Bucket)
+				{
+					continue;
+				}
+				for (const int32 OtherId : *Bucket)
+				{
+					if (OtherId > CellId && FChronoOrientedBox2D::Overlap(Box, Grid.GetCellBox(Grid.GetCells().FindChecked(OtherId)), Settings.OverlapToleranceCm + ZoningRules.CellOverlapToleranceCm))
+					{
+						Add(ChronoAuditRule::ZoneCellOverlap, Cell.Center, FString::Printf(TEXT("Cell %d overlaps cell %d"), CellId, OtherId));
+					}
+				}
+			}
+		}
+	}
+
+	return NumAdded;
 }

@@ -5,8 +5,10 @@
 	"Description": "Chronopolis: one city, seven eras.",
 	"Modules": [
 		{ "Name": "ChronoCore", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoRender", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoTerrain", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoRoads", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoZoning", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoAudit", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoSave", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoGame", "Type": "Runtime", "LoadingPhase": "Default" }

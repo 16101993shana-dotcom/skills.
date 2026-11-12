@@ -15,7 +15,8 @@ public class ChronoGame : ModuleRules
 			"EnhancedInput",
 			"ChronoCore",
 			"ChronoTerrain",
-			"ChronoRoads"
+			"ChronoRoads",
+			"ChronoZoning"
 		});
 	}
 }

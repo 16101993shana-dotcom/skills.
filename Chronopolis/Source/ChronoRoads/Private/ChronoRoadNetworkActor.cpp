@@ -1,55 +1,13 @@
 #include "ChronoRoadNetworkActor.h"
 
+#include "ChronoMeshConversion.h"
 #include "ChronoMeshData.h"
 #include "ChronoRoadMeshBuilder.h"
 #include "ChronoRoadSubsystem.h"
 #include "ChronoSettings.h"
 #include "Components/DynamicMeshComponent.h"
 #include "Components/SceneComponent.h"
-#include "DynamicMesh/DynamicMesh3.h"
-#include "DynamicMesh/DynamicMeshAttributeSet.h"
-#include "IndexTypes.h"
 #include "Materials/MaterialInterface.h"
-
-namespace ChronoRoadNetworkActorPrivate
-{
-	/** Converts the plain triangle soup into the engine dynamic mesh format. */
-	void ToDynamicMesh(const FChronoMeshData& Source, bool bFlipWinding, UE::Geometry::FDynamicMesh3& OutMesh)
-	{
-		OutMesh.Clear();
-		OutMesh.EnableAttributes();
-		OutMesh.Attributes()->EnableMaterialID();
-
-		UE::Geometry::FDynamicMeshUVOverlay* UVOverlay = OutMesh.Attributes()->PrimaryUV();
-		UE::Geometry::FDynamicMeshNormalOverlay* NormalOverlay = OutMesh.Attributes()->PrimaryNormals();
-		UE::Geometry::FDynamicMeshMaterialAttribute* MaterialIds = OutMesh.Attributes()->GetMaterialID();
-
-		// Vertices, UVs and normals are appended in the same order, so the
-		// three ids of a vertex are identical.
-		for (int32 Index = 0; Index < Source.Positions.Num(); ++Index)
-		{
-			OutMesh.AppendVertex(FVector3d(Source.Positions[Index]));
-			UVOverlay->AppendElement(Source.UVs[Index]);
-			NormalOverlay->AppendElement(Source.Normals[Index]);
-		}
-
-		for (int32 Triangle = 0; Triangle < Source.NumTriangles(); ++Triangle)
-		{
-			const int32 A = Source.Triangles[Triangle * 3];
-			const int32 B = Source.Triangles[Triangle * 3 + 1];
-			const int32 C = Source.Triangles[Triangle * 3 + 2];
-			const UE::Geometry::FIndex3i Indices = bFlipWinding ? UE::Geometry::FIndex3i(A, C, B) : UE::Geometry::FIndex3i(A, B, C);
-
-			const int32 TriangleId = OutMesh.AppendTriangle(Indices.A, Indices.B, Indices.C);
-			if (TriangleId >= 0)
-			{
-				UVOverlay->SetTriangle(TriangleId, Indices);
-				NormalOverlay->SetTriangle(TriangleId, Indices);
-				MaterialIds->SetValue(TriangleId, Source.MaterialIds[Triangle]);
-			}
-		}
-	}
-}
 
 AChronoRoadNetworkActor::AChronoRoadNetworkActor()
 {
@@ -231,9 +189,7 @@ void AChronoRoadNetworkActor::ApplyMesh(TMap<int32, TObjectPtr<UDynamicMeshCompo
 
 	Component->SetWorldLocation(Origin);
 
-	UE::Geometry::FDynamicMesh3 Mesh;
-	ChronoRoadNetworkActorPrivate::ToDynamicMesh(MeshData, bFlipWinding, Mesh);
-	Component->SetMesh(MoveTemp(Mesh));
+	ChronoMeshConversion::ApplyToComponent(MeshData, bFlipWinding, *Component);
 }
 
 void AChronoRoadNetworkActor::DestroyComponentFor(TMap<int32, TObjectPtr<UDynamicMeshComponent>>& Components, int32 Id)

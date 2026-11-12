@@ -6,6 +6,8 @@
 #include "ChronoRoadSubsystem.h"
 #include "ChronoSimulationSubsystem.h"
 #include "ChronoTerrainSubsystem.h"
+#include "ChronoZoneGrid.h"
+#include "ChronoZoningSubsystem.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/FileHelper.h"
@@ -20,7 +22,8 @@ namespace ChronoSavePrivate
 
 	// Bump when a block is added or changed. Older files are refused for now;
 	// migration code goes here when the format has shipped.
-	const int32 FileVersion = 1;
+	// Version 2 adds the zoning grid after the roads.
+	const int32 FileVersion = 2;
 
 	const TCHAR* DefaultSlot = TEXT("quicksave");
 
@@ -80,7 +83,8 @@ bool UChronoSaveSubsystem::SaveGame(const FString& SlotName)
 	UChronoSimulationSubsystem* Simulation = World ? World->GetSubsystem<UChronoSimulationSubsystem>() : nullptr;
 	UChronoTerrainSubsystem* Terrain = World ? World->GetSubsystem<UChronoTerrainSubsystem>() : nullptr;
 	UChronoRoadSubsystem* Roads = World ? World->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
-	if (!Simulation || !Terrain || !Roads)
+	UChronoZoningSubsystem* Zoning = World ? World->GetSubsystem<UChronoZoningSubsystem>() : nullptr;
+	if (!Simulation || !Terrain || !Roads || !Zoning)
 	{
 		UE_LOG(LogChrono, Error, TEXT("Save failed: the game systems are not running"));
 		return false;
@@ -98,7 +102,8 @@ bool UChronoSaveSubsystem::SaveGame(const FString& SlotName)
 
 	const bool bTerrainSaved = Terrain->SerializeTerrain(Writer);
 	const bool bRoadsSaved = Roads->SerializeRoads(Writer);
-	if (!bTerrainSaved || !bRoadsSaved || Writer.IsError())
+	const bool bZoningSaved = Zoning->SerializeZoning(Writer);
+	if (!bTerrainSaved || !bRoadsSaved || !bZoningSaved || Writer.IsError())
 	{
 		UE_LOG(LogChrono, Error, TEXT("Save failed: could not serialize the game state"));
 		return false;
@@ -121,7 +126,8 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 	UChronoSimulationSubsystem* Simulation = World ? World->GetSubsystem<UChronoSimulationSubsystem>() : nullptr;
 	UChronoTerrainSubsystem* Terrain = World ? World->GetSubsystem<UChronoTerrainSubsystem>() : nullptr;
 	UChronoRoadSubsystem* Roads = World ? World->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
-	if (!Simulation || !Terrain || !Roads)
+	UChronoZoningSubsystem* Zoning = World ? World->GetSubsystem<UChronoZoningSubsystem>() : nullptr;
+	if (!Simulation || !Terrain || !Roads || !Zoning)
 	{
 		UE_LOG(LogChrono, Error, TEXT("Load failed: the game systems are not running"));
 		return false;
@@ -167,13 +173,15 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 		ProbeTerrain.Serialize(Probe);
 		FChronoRoadGraph ProbeRoads;
 		const bool bRoadsValid = ProbeRoads.Serialize(Probe);
+		FChronoZoneGrid ProbeZoning;
+		const bool bZoningValid = ProbeZoning.Serialize(Probe);
 
 		const FChronoHeightfield& Current = Terrain->GetHeightfield();
 		const bool bSameSize = ProbeTerrain.IsValid()
 			&& ProbeTerrain.GetSizeCells() == Current.GetSizeCells()
 			&& FMath::IsNearlyEqual(ProbeTerrain.GetCellSizeCm(), Current.GetCellSizeCm());
 
-		if (Probe.IsError() || !bRoadsValid || !bSameSize || TickIndex < 0)
+		if (Probe.IsError() || !bRoadsValid || !bZoningValid || !bSameSize || TickIndex < 0)
 		{
 			UE_LOG(LogChrono, Error, TEXT("Load failed: %s is damaged or was saved on a map of another size"), *Path);
 			return false;
@@ -188,7 +196,11 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 
 	const bool bTerrainLoaded = Terrain->SerializeTerrain(Reader);
 	const bool bRoadsLoaded = bTerrainLoaded && Roads->SerializeRoads(Reader);
-	if (!bRoadsLoaded)
+
+	// Loading the roads lays out fresh cells; the saved grid then replaces
+	// them, with the zones the player had painted.
+	const bool bZoningLoaded = bRoadsLoaded && Zoning->SerializeZoning(Reader);
+	if (!bZoningLoaded)
 	{
 		// Should not happen after a successful dry run.
 		UE_LOG(LogChrono, Error, TEXT("Load failed while applying %s"), *Path);

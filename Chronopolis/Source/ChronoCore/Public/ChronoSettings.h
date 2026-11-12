@@ -154,4 +154,38 @@ public:
 	/** Material slot 2: side faces and end caps. */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads")
 	TSoftObjectPtr<UMaterialInterface> RoadSideMaterial;
+
+	// ---- Zoning ----
+
+	/** Side of one square zoning cell. */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning", meta = (ClampMin = "200.0"))
+	float ZoneCellSizeCm = 800.0f;
+
+	/** Number of rows of cells behind each side of a road. */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning", meta = (ClampMin = "1", ClampMax = "12"))
+	int32 ZoneMaxDepthCells = 4;
+
+	/** Gap between the outer edge of a road and the first row of cells. */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning", meta = (ClampMin = "0.0"))
+	float ZoneRoadSetbackCm = 100.0f;
+
+	/** A cell is refused if any road comes closer than this to it. Must be below the setback. */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning", meta = (ClampMin = "0.0"))
+	float ZoneRoadClearanceCm = 20.0f;
+
+	/** A cell is refused if the ground under it varies by more than this height. */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning", meta = (ClampMin = "10.0"))
+	float ZoneMaxHeightRangeCm = 250.0f;
+
+	/** Height of the zoning overlay above the ground. */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning", meta = (ClampMin = "1.0"))
+	float ZoneOverlayLiftCm = 12.0f;
+
+	/** Overlay material per zone type, indexed by EChronoZoneType (0 = unzoned). */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning")
+	TArray<TSoftObjectPtr<UMaterialInterface>> ZoneOverlayMaterials;
+
+	/** Zone overlay meshes rebuilt per frame after an edit. */
+	UPROPERTY(Config, EditAnywhere, Category = "Zoning", meta = (ClampMin = "1", ClampMax = "256"))
+	int32 MaxZoneMeshRebuildsPerFrame = 8;
 };

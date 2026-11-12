@@ -6,6 +6,7 @@
 #include "ChronoRoadTypes.h"
 #include "ChronoSimulationSubsystem.h"
 #include "ChronoTerrainSubsystem.h"
+#include "ChronoZoningSubsystem.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/LocalPlayer.h"
@@ -106,6 +107,11 @@ bool AChronoPlayerController::GetGroundUnderCursor(FVector& OutLocation) const
 
 void AChronoPlayerController::OnRaise(const FInputActionValue& Value)
 {
+	if (ToolMode == EChronoToolMode::Zone)
+	{
+		PaintZoneUnderCursor(PaintZone);
+		return;
+	}
 	if (ToolMode != EChronoToolMode::Terraform)
 	{
 		return;
@@ -121,6 +127,11 @@ void AChronoPlayerController::OnRaise(const FInputActionValue& Value)
 
 void AChronoPlayerController::OnLower(const FInputActionValue& Value)
 {
+	if (ToolMode == EChronoToolMode::Zone)
+	{
+		PaintZoneUnderCursor(EChronoZoneType::None);
+		return;
+	}
 	if (ToolMode != EChronoToolMode::Terraform)
 	{
 		return;
@@ -188,7 +199,42 @@ void AChronoPlayerController::PlayerTick(float DeltaTime)
 
 void AChronoPlayerController::ChronoTool(int32 ToolIndex)
 {
-	SetToolMode(ToolIndex == 1 ? EChronoToolMode::Road : EChronoToolMode::Terraform);
+	switch (ToolIndex)
+	{
+	case 1:
+		SetToolMode(EChronoToolMode::Road);
+		break;
+	case 2:
+		SetToolMode(EChronoToolMode::Zone);
+		break;
+	default:
+		SetToolMode(EChronoToolMode::Terraform);
+		break;
+	}
+}
+
+void AChronoPlayerController::ChronoZone(int32 ZoneIndex)
+{
+	const int32 Clamped = FMath::Clamp(ZoneIndex, 0, static_cast<int32>(EChronoZoneType::Count) - 1);
+	SetPaintZone(static_cast<EChronoZoneType>(Clamped));
+}
+
+void AChronoPlayerController::SetPaintZone(EChronoZoneType NewZone)
+{
+	if (NewZone < EChronoZoneType::Count)
+	{
+		PaintZone = NewZone;
+	}
+}
+
+void AChronoPlayerController::PaintZoneUnderCursor(EChronoZoneType Zone)
+{
+	FVector Ground;
+	UChronoZoningSubsystem* Zoning = GetWorld()->GetSubsystem<UChronoZoningSubsystem>();
+	if (Zoning && GetGroundUnderCursor(Ground))
+	{
+		Zoning->PaintZone(FVector2D(Ground.X, Ground.Y), ZoneBrushRadiusCm, Zone);
+	}
 }
 
 void AChronoPlayerController::ChronoRoadCurve(int32 Enabled)
@@ -201,6 +247,12 @@ void AChronoPlayerController::SetToolMode(EChronoToolMode NewMode)
 	ToolMode = NewMode;
 	ResetRoadDrawing();
 	bHasFlattenTarget = false;
+
+	// The zoning overlay is only shown while the zoning tool is active.
+	if (UChronoZoningSubsystem* Zoning = GetWorld() ? GetWorld()->GetSubsystem<UChronoZoningSubsystem>() : nullptr)
+	{
+		Zoning->SetOverlayVisible(ToolMode == EChronoToolMode::Zone);
+	}
 }
 
 void AChronoPlayerController::SetCurvedRoads(bool bInCurved)

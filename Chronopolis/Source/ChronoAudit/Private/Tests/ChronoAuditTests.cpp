@@ -7,6 +7,7 @@
 #include "ChronoHeightfield.h"
 #include "ChronoRoadBuilder.h"
 #include "ChronoRoadGraph.h"
+#include "ChronoZoneGrid.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -18,6 +19,8 @@ namespace ChronoAuditTests
 		FChronoHeightfield Heightfield;
 		FChronoRoadGraph Graph;
 		FChronoRoadRules Rules;
+		FChronoZoneGrid Zoning;
+		FChronoZoningRules ZoningRules;
 		int32 NumBuilt = 0;
 		int32 NumRefused = 0;
 
@@ -59,6 +62,7 @@ namespace ChronoAuditTests
 			Graph = MoveTemp(Scratch);
 			const FChronoRoadChangeSet Changes = ChronoRoadBuilder::TakeChanges(Graph);
 			ChronoRoadBuilder::ConformTerrain(Graph, Changes, Rules, Heightfield);
+			Zoning.ApplyRoadChanges(Graph, Heightfield, Changes, ZoningRules);
 			++NumBuilt;
 			return Result;
 		}
@@ -114,6 +118,18 @@ bool FChronoAuditCleanCityTest::RunTest(const FString& Parameters)
 		AddError(FString::Printf(TEXT("[%s] %s at %s"), *Issue.Rule.ToString(), *Issue.Description, *Issue.Location.ToCompactString()));
 	}
 	TestEqual(TEXT("Zero-clipping audit reports nothing"), Issues.Num(), 0);
+
+	// Zoning cells laid out along those roads, updated after every edit.
+	AddInfo(FString::Printf(TEXT("Zoning: %d cells"), City.Zoning.GetNumCells()));
+	TestTrue(TEXT("The scenario contains zoning cells"), City.Zoning.GetNumCells() > 100);
+
+	TArray<FChronoAuditIssue> ZoningIssues;
+	ChronoClippingAudit::RunZoning(City.Graph, City.Zoning, City.ZoningRules, FChronoAuditSettings(), ZoningIssues);
+	for (const FChronoAuditIssue& Issue : ZoningIssues)
+	{
+		AddError(FString::Printf(TEXT("[%s] %s at %s"), *Issue.Rule.ToString(), *Issue.Description, *Issue.Location.ToCompactString()));
+	}
+	TestEqual(TEXT("Zoning audit reports nothing"), ZoningIssues.Num(), 0);
 
 	// A refused road must leave no trace: an overlapping road is rejected and
 	// the audit is still clean afterwards.
