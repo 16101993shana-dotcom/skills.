@@ -23,7 +23,7 @@ struct CHRONOROADS_API FChronoRoadRules
 	float ClearanceCm = 600.0f;
 	float SampleSpacingCm = 200.0f;
 	float RoadbedOffsetCm = 20.0f;
-	float SkirtDepthCm = 60.0f;
+	float SkirtDepthCm = 100.0f;
 	float TerrainBlendCm = 800.0f;
 
 	/** Rules read from the project settings. */

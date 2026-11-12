@@ -145,6 +145,7 @@ void FChronoRoadRules::ApplyTo(FChronoRoadGraph& Graph) const
 {
 	Graph.SetMinTrimCm(MinTrimCm);
 	Graph.SetJunctionLevelRunCm(JunctionLevelRunCm);
+	Graph.SetSampleSpacingCm(SampleSpacingCm);
 }
 
 EChronoRoadBuildResult ChronoRoadBuilder::ApplyAndValidate(FChronoRoadGraph& InOutGraph, const FChronoHeightfield& Heightfield, const FChronoRoadRules& Rules, const FChronoRoadBuildRequest& Request, int32& OutSegmentId)
@@ -280,16 +281,29 @@ FIntRect ChronoRoadBuilder::ConformTerrain(const FChronoRoadGraph& Graph, const 
 
 	TArray<FVector> Path;
 
+	// Reach of a roadbed beyond the ribbon or disc it belongs to: the margin
+	// that is set exactly, then the blend.
+	const double HardMargin = CellSize * UE_SQRT_2;
+	const double BlendReach = HardMargin + Blend + CellSize;
+
+	auto NodeBox = [&Graph](const FChronoRoadNode& Node, int32 NodeId, double Extra)
+	{
+		const double Reach = Graph.GetNodeRadiusCm(NodeId) + Extra;
+		const FVector2D Center(Node.Position.X, Node.Position.Y);
+		return FBox2D(Center - FVector2D(Reach, Reach), Center + FVector2D(Reach, Reach));
+	};
+
 	// Pass 1: lay the roadbed of everything that changed and blend the
-	// surrounding ground toward it.
-	FBox2D TouchedArea(ForceInit);
+	// surrounding ground toward it. Each changed piece keeps its own box:
+	// one box around all of them would cover ground that nothing touched.
+	TArray<FBox2D> TouchedBoxes;
 	for (const int32 SegmentId : Changes.ChangedSegments)
 	{
 		if (const FChronoRoadSegment* Segment = Graph.FindSegment(SegmentId))
 		{
 			Graph.BuildSegmentPath(*Segment, Spacing, Path);
 			Dirty = UnionRects(Dirty, InOutHeightfield.ConformToPath(Path, Segment->Profile.GetHalfWidthCm(), Offset, Blend, EChronoConformMode::BlendAndSet));
-			TouchedArea += Segment->Bounds;
+			TouchedBoxes.Add(Segment->Bounds.ExpandBy(BlendReach));
 		}
 	}
 	for (const int32 NodeId : Changes.ChangedNodes)
@@ -297,33 +311,44 @@ FIntRect ChronoRoadBuilder::ConformTerrain(const FChronoRoadGraph& Graph, const 
 		const FChronoRoadNode* Node = Graph.FindNode(NodeId);
 		if (Node && Node->SegmentIds.Num() >= 2)
 		{
-			const float Radius = Graph.GetNodeRadiusCm(NodeId);
 			Path.Reset();
 			Path.Add(Node->Position);
-			Dirty = UnionRects(Dirty, InOutHeightfield.ConformToPath(Path, Radius, Offset, Blend, EChronoConformMode::BlendAndSet));
-
-			const FVector2D Center(Node->Position.X, Node->Position.Y);
-			TouchedArea += FBox2D(Center - FVector2D(Radius, Radius), Center + FVector2D(Radius, Radius));
+			Dirty = UnionRects(Dirty, InOutHeightfield.ConformToPath(Path, Graph.GetNodeRadiusCm(NodeId), Offset, Blend, EChronoConformMode::BlendAndSet));
+			TouchedBoxes.Add(NodeBox(*Node, NodeId, BlendReach));
 		}
 	}
 
-	if (!TouchedArea.bIsValid)
+	if (TouchedBoxes.Num() == 0)
 	{
 		return Dirty;
 	}
 
-	// Pass 2: the blend of one road may have moved the ground under another
-	// road nearby. Restore the exact roadbed of everything in the touched
-	// area. Junction discs go first and segments last, because a disc can
-	// reach over the sloped part of a road and the road must win there.
-	const FBox2D SearchArea = TouchedArea.ExpandBy(Blend + 2.0 * CellSize);
+	auto IntersectsAny = [](const FBox2D& Box, const TArray<FBox2D>& Boxes)
+	{
+		for (const FBox2D& Other : Boxes)
+		{
+			if (Box.Intersect(Other))
+			{
+				return true;
+			}
+		}
+		return false;
+	};
 
+	// Pass 2: the blend of one road may have moved the ground under another
+	// road nearby. Restore the exact roadbed of everything the edit reached.
+	// Junction discs go first and segments last, because a disc can reach
+	// over a road (its own arms, or an unconnected road passing close by)
+	// and the road must win there. So every road under a restored disc is
+	// restored too, even if the edit itself did not reach it.
 	TArray<int32> NodeIds;
+	TArray<FBox2D> RestoredBoxes = TouchedBoxes;
 	for (const TPair<int32, FChronoRoadNode>& Pair : Graph.GetNodes())
 	{
-		if (Pair.Value.SegmentIds.Num() >= 2 && SearchArea.IsInside(FVector2D(Pair.Value.Position.X, Pair.Value.Position.Y)))
+		if (Pair.Value.SegmentIds.Num() >= 2 && IntersectsAny(NodeBox(Pair.Value, Pair.Key, HardMargin), TouchedBoxes))
 		{
 			NodeIds.Add(Pair.Key);
+			RestoredBoxes.Add(NodeBox(Pair.Value, Pair.Key, HardMargin + CellSize));
 		}
 	}
 	NodeIds.Sort();
@@ -331,7 +356,7 @@ FIntRect ChronoRoadBuilder::ConformTerrain(const FChronoRoadGraph& Graph, const 
 	TArray<int32> SegmentIds;
 	for (const TPair<int32, FChronoRoadSegment>& Pair : Graph.GetSegments())
 	{
-		if (SearchArea.Intersect(Pair.Value.Bounds))
+		if (IntersectsAny(Pair.Value.Bounds.ExpandBy(HardMargin + CellSize), RestoredBoxes))
 		{
 			SegmentIds.Add(Pair.Key);
 		}

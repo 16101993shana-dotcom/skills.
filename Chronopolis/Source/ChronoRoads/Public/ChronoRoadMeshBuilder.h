@@ -24,7 +24,7 @@ struct FChronoRoadMeshSettings
 	double SampleSpacingCm = 200.0;
 
 	/** How far the side faces go down below the road surface. */
-	float SkirtDepthCm = 40.0f;
+	float SkirtDepthCm = 100.0f;
 };
 
 namespace ChronoRoadMeshBuilder

@@ -7,13 +7,18 @@ namespace ChronoRoadGeometryPrivate
 		return A.X * B.Y - A.Y * B.X;
 	}
 
-	/** True if Point is inside or on the border of the counterclockwise triangle ABC. */
-	bool IsPointInTriangle(const FVector2D& Point, const FVector2D& A, const FVector2D& B, const FVector2D& C)
+	/**
+	 * True if Point is inside the counterclockwise triangle ABC or within
+	 * MarginCm of its border. A corner that sits on the border of a candidate
+	 * ear must block it: cutting the ear would leave that corner outside.
+	 */
+	bool IsPointInTriangle(const FVector2D& Point, const FVector2D& A, const FVector2D& B, const FVector2D& C, double MarginCm)
 	{
+		// Cross product = edge length x signed distance from the point to the edge.
 		const double D1 = Cross2D(B - A, Point - A);
 		const double D2 = Cross2D(C - B, Point - B);
 		const double D3 = Cross2D(A - C, Point - C);
-		return D1 >= 0.0 && D2 >= 0.0 && D3 >= 0.0;
+		return D1 >= -MarginCm * (B - A).Size() && D2 >= -MarginCm * (C - B).Size() && D3 >= -MarginCm * (A - C).Size();
 	}
 }
 
@@ -383,9 +388,12 @@ void ChronoRoadGeometry::ComputeJunctionTrims(const TArray<FChronoRoadArm>& Arms
 		const double AngleI = FMath::Atan2(Arms[I].Direction.Y, Arms[I].Direction.X);
 		const double AngleJ = FMath::Atan2(Arms[J].Direction.Y, Arms[J].Direction.X);
 
-		// Angle swept counterclockwise from arm I to arm J, in (0, 2 pi].
+		// Angle swept counterclockwise from arm I to arm J. The arms are
+		// sorted by angle, so it is never negative, except for the last pair,
+		// which wraps around. Two arms with the same direction (a road laid
+		// on top of another) give 0, which the minimum angle rule refuses.
 		double Theta = AngleJ - AngleI;
-		if (Theta <= 0.0)
+		if (Slot == NumArms - 1)
 		{
 			Theta += 2.0 * UE_DOUBLE_PI;
 		}
@@ -431,18 +439,29 @@ bool ChronoRoadGeometry::TriangulatePolygon(const TArray<FVector2D>& Polygon, TA
 		return false;
 	}
 
-	// Remaining polygon, as indices into the input.
+	// Corners closer than this (cm) are the same corner, and a corner closer
+	// than this to the line through its neighbors is flat. Junction outlines
+	// are built from sampled curves, so their corners only meet approximately.
+	const double MergeToleranceCm = 1.0;
+
+	// Remaining polygon, as indices into the input, without repeated corners.
 	TArray<int32> Remaining;
 	Remaining.Reserve(Polygon.Num());
 	for (int32 Index = 0; Index < Polygon.Num(); ++Index)
 	{
-		Remaining.Add(Index);
+		if (Remaining.Num() == 0 || FVector2D::Distance(Polygon[Remaining.Last()], Polygon[Index]) > MergeToleranceCm)
+		{
+			Remaining.Add(Index);
+		}
 	}
-
-	// Twice the area (cm2) below which a corner is treated as flat.
-	const double FlatTolerance = 1.0e-3;
-	// Points closer than this (cm) to a corner of the candidate ear are the same point.
-	const double SamePointToleranceSquared = 1.0e-2;
+	while (Remaining.Num() > 1 && FVector2D::Distance(Polygon[Remaining.Last()], Polygon[Remaining[0]]) <= MergeToleranceCm)
+	{
+		Remaining.RemoveAt(Remaining.Num() - 1);
+	}
+	if (Remaining.Num() < 3)
+	{
+		return false;
+	}
 
 	while (Remaining.Num() >= 3)
 	{
@@ -460,8 +479,9 @@ bool ChronoRoadGeometry::TriangulatePolygon(const TArray<FVector2D>& Polygon, TA
 
 			const double Turn = Cross2D(B - A, C - B);
 
-			// Duplicate or collinear corner: drop it, it encloses no area.
-			if (FMath::Abs(Turn) <= FlatTolerance)
+			// Flat corner (B is on the line from A to C): drop it, it encloses no area.
+			const double Base = (C - A).Size();
+			if (Base <= MergeToleranceCm || FMath::Abs(Turn) <= MergeToleranceCm * Base)
 			{
 				Remaining.RemoveAt(Slot);
 				bProgress = true;
@@ -484,15 +504,15 @@ bool ChronoRoadGeometry::TriangulatePolygon(const TArray<FVector2D>& Polygon, TA
 					continue;
 				}
 
+				// A corner that coincides with a corner of the ear (two
+				// roads meeting at the same point) does not block it.
 				const FVector2D& P = Polygon[IndexP];
-				if (FVector2D::DistSquared(P, A) < SamePointToleranceSquared ||
-					FVector2D::DistSquared(P, B) < SamePointToleranceSquared ||
-					FVector2D::DistSquared(P, C) < SamePointToleranceSquared)
+				if (FVector2D::Distance(P, A) <= MergeToleranceCm || FVector2D::Distance(P, B) <= MergeToleranceCm || FVector2D::Distance(P, C) <= MergeToleranceCm)
 				{
 					continue;
 				}
 
-				bContainsVertex = IsPointInTriangle(P, A, B, C);
+				bContainsVertex = IsPointInTriangle(P, A, B, C, MergeToleranceCm);
 			}
 
 			if (!bContainsVertex)

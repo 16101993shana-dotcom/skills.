@@ -55,6 +55,6 @@ private:
 
 	int32 MaxRebuildsPerFrame = 8;
 	double SampleSpacingCm = 200.0;
-	float SkirtDepthCm = 40.0f;
+	float SkirtDepthCm = 100.0f;
 	bool bFlipWinding = false;
 };

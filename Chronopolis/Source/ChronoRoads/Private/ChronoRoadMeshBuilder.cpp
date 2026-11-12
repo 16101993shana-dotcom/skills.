@@ -108,6 +108,24 @@ bool ChronoRoadMeshBuilder::BuildNodePolygon(const FChronoRoadGraph& Graph, int3
 		OutEdgeIsMouth.Add(false);
 	}
 
+	// Where two neighboring roads meet at their inner corner, the two corners
+	// are the same point for straight roads but only nearly so for curved
+	// ones, and may even be slightly crossed. Joining them keeps the outline
+	// simple. The junction then differs from the ribbon corner by a few
+	// centimeters at most, on a surface that is level and of the same material.
+	const double JoinToleranceCm = 15.0;
+	for (int32 Edge = 1; Edge < OutPolygon.Num(); Edge += 2)
+	{
+		FVector2D& A = OutPolygon[Edge];
+		FVector2D& B = OutPolygon[(Edge + 1) % OutPolygon.Num()];
+		if (FVector2D::Distance(A, B) <= JoinToleranceCm)
+		{
+			const FVector2D Middle = (A + B) * 0.5;
+			A = Middle;
+			B = Middle;
+		}
+	}
+
 	return true;
 }
 

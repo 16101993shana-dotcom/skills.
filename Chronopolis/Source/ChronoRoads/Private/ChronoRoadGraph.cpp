@@ -228,6 +228,7 @@ void FChronoRoadGraph::RecomputeNodeTrims(int32 NodeId)
 	TArray<float> Trims;
 	float MinAngleDegrees = 0.0f;
 	ChronoRoadGeometry::ComputeJunctionTrims(Arms, MinTrimCm, Trims, MinAngleDegrees);
+	RefineTrims(NodeId, SegmentIds, Arms, Trims);
 
 	for (int32 Index = 0; Index < SegmentIds.Num(); ++Index)
 	{
@@ -246,6 +247,116 @@ void FChronoRoadGraph::RecomputeNodeTrims(int32 NodeId)
 	}
 
 	DirtyNodes.Add(NodeId);
+}
+
+void FChronoRoadGraph::RefineTrims(int32 NodeId, const TArray<int32>& SegmentIds, const TArray<FChronoRoadArm>& Arms, TArray<float>& InOutTrims) const
+{
+	const int32 NumArms = SegmentIds.Num();
+	if (NumArms < 2)
+	{
+		return;
+	}
+
+	// Each trim grows by this much per pass, for at most this many passes.
+	const float StepCm = 50.0f;
+	const int32 MaxPasses = 80;
+	// Ribbons that overlap by less than this are only touching.
+	const double TouchToleranceCm = 1.0;
+
+	struct FArmGeometry
+	{
+		TArray<FChronoRoadSample> Samples;
+		double Length = 0.0;
+		double HalfWidth = 0.0;
+		bool bStartsHere = false;
+		bool bValid = false;
+	};
+
+	TArray<FArmGeometry> Geometry;
+	Geometry.SetNum(NumArms);
+	for (int32 Index = 0; Index < NumArms; ++Index)
+	{
+		if (const FChronoRoadSegment* Segment = Segments.Find(SegmentIds[Index]))
+		{
+			FArmGeometry& Arm = Geometry[Index];
+			ChronoRoadGeometry::BuildPolyline(Segment->Curve, SampleSpacingCm, Arm.Samples);
+			Arm.Length = Segment->Length;
+			Arm.HalfWidth = Segment->Profile.GetHalfWidthCm();
+			Arm.bStartsHere = (Segment->StartNodeId == NodeId);
+			Arm.bValid = true;
+		}
+	}
+
+	TArray<int32> Order;
+	ChronoRoadGeometry::SortArmsCounterClockwise(Arms, Order);
+
+	// The part of an arm that leaves the junction: from its trim, over Reach.
+	auto ClipArm = [&Geometry](int32 Index, float Trim, double Reach, TArray<FChronoRoadSample>& OutSamples)
+	{
+		const FArmGeometry& Arm = Geometry[Index];
+		if (Arm.bStartsHere)
+		{
+			ChronoRoadGeometry::ClipPolyline(Arm.Samples, Trim, FMath::Min(Arm.Length, Trim + Reach), OutSamples);
+		}
+		else
+		{
+			ChronoRoadGeometry::ClipPolyline(Arm.Samples, FMath::Max(0.0, Arm.Length - Trim - Reach), Arm.Length - Trim, OutSamples);
+		}
+	};
+
+	// True if an edge point of ribbon A lies inside ribbon B.
+	auto EdgeEntersRibbon = [TouchToleranceCm](const TArray<FChronoRoadSample>& SamplesA, double HalfWidthA, const TArray<FChronoRoadSample>& SamplesB, double HalfWidthB)
+	{
+		for (const FChronoRoadSample& Sample : SamplesA)
+		{
+			const FVector2D Side(-Sample.Tangent.Y, Sample.Tangent.X);
+			if (ChronoRoadGeometry::IsPointInsideRibbon(Sample.Position + Side * HalfWidthA, SamplesB, HalfWidthB - TouchToleranceCm)
+				|| ChronoRoadGeometry::IsPointInsideRibbon(Sample.Position - Side * HalfWidthA, SamplesB, HalfWidthB - TouchToleranceCm))
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
+	TArray<FChronoRoadSample> ClippedI;
+	TArray<FChronoRoadSample> ClippedJ;
+
+	for (int32 Pass = 0; Pass < MaxPasses; ++Pass)
+	{
+		bool bChanged = false;
+
+		for (int32 Slot = 0; Slot < NumArms; ++Slot)
+		{
+			const int32 I = Order[Slot];
+			const int32 J = Order[(Slot + 1) % NumArms];
+			if (I == J || !Geometry[I].bValid || !Geometry[J].bValid)
+			{
+				continue;
+			}
+
+			// Far enough from the node, two roads that respect the minimum
+			// angle are apart: only the stretch after the junction is checked.
+			const double Reach = 4.0 * (Geometry[I].HalfWidth + Geometry[J].HalfWidth) + 500.0;
+			ClipArm(I, InOutTrims[I], Reach, ClippedI);
+			ClipArm(J, InOutTrims[J], Reach, ClippedJ);
+
+			if (EdgeEntersRibbon(ClippedI, Geometry[I].HalfWidth, ClippedJ, Geometry[J].HalfWidth)
+				|| EdgeEntersRibbon(ClippedJ, Geometry[J].HalfWidth, ClippedI, Geometry[I].HalfWidth))
+			{
+				// A trim longer than its segment leaves no road at all: the
+				// placement rules then refuse the edit.
+				InOutTrims[I] = FMath::Min(InOutTrims[I] + StepCm, static_cast<float>(Geometry[I].Length));
+				InOutTrims[J] = FMath::Min(InOutTrims[J] + StepCm, static_cast<float>(Geometry[J].Length));
+				bChanged = true;
+			}
+		}
+
+		if (!bChanged)
+		{
+			break;
+		}
+	}
 }
 
 float FChronoRoadGraph::GetNodeMinAngleDegrees(int32 NodeId) const

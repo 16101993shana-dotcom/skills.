@@ -52,6 +52,9 @@ public:
 	/** Distance over which a road stays level after leaving a junction. Set once from the project settings. */
 	void SetJunctionLevelRunCm(float InLevelRunCm) { LevelRunCm = FMath::Max(InLevelRunCm, 0.0f); }
 
+	/** Spacing of the centerline samples used to check junctions. Set once from the project settings. */
+	void SetSampleSpacingCm(float InSpacingCm) { SampleSpacingCm = FMath::Max(InSpacingCm, 25.0f); }
+
 	int32 AddNode(const FVector& Position);
 
 	/** Adds a segment between two existing nodes. Returns INDEX_NONE on invalid input. */
@@ -121,6 +124,12 @@ private:
 	void RefreshSegmentMetrics(FChronoRoadSegment& Segment) const;
 	void RecomputeNodeTrims(int32 NodeId);
 
+	/**
+	 * Lengthens the trims computed for straight roads until the ribbons of
+	 * neighboring roads no longer overlap after the junction (curved roads).
+	 */
+	void RefineTrims(int32 NodeId, const TArray<int32>& SegmentIds, const TArray<FChronoRoadArm>& Arms, TArray<float>& InOutTrims) const;
+
 	TMap<int32, FChronoRoadNode> Nodes;
 	TMap<int32, FChronoRoadSegment> Segments;
 
@@ -128,6 +137,7 @@ private:
 	int32 NextSegmentId = 1;
 	float MinTrimCm = 100.0f;
 	float LevelRunCm = 0.0f;
+	float SampleSpacingCm = 200.0f;
 
 	TSet<int32> DirtySegments;
 	TSet<int32> DirtyNodes;

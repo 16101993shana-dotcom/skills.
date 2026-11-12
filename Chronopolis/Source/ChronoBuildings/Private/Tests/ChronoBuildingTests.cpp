@@ -82,7 +82,7 @@ namespace ChronoBuildingTests
 			}
 			return Total;
 		}
-	}
+	};
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoBuildingGrowthTest, "Chronopolis.Buildings.GrowOnZonedCells",

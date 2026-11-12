@@ -131,9 +131,14 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "1.0"))
 	float RoadbedOffsetCm = 20.0f;
 
-	/** Depth of the side faces of a road mesh. Must be larger than RoadbedOffsetCm. */
+	/**
+	 * Depth of the side faces of a road mesh. Must be larger than
+	 * RoadbedOffsetCm. Where two roads leave a junction at different grades,
+	 * the ground follows the lower one and the side faces of the higher one
+	 * hide the difference, so keep this generous.
+	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "5.0"))
-	float RoadSkirtDepthCm = 60.0f;
+	float RoadSkirtDepthCm = 100.0f;
 
 	/** Width over which the ground blends from the roadbed back to the natural relief. */
 	UPROPERTY(Config, EditAnywhere, Category = "Roads", meta = (ClampMin = "0.0"))

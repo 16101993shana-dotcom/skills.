@@ -50,7 +50,7 @@ namespace ChronoZoningTests
 			Zoning.ApplyRoadChanges(Graph, Heightfield, Changes, ZoningRules);
 			return true;
 		}
-	}
+	};
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoGeometryBoxTest, "Chronopolis.Zoning.Geometry.OrientedBox",

@@ -98,7 +98,7 @@ namespace ChronoAuditTests
 			const FVector2D Control(-17000.0, -24500.0);
 			Build(FVector2D(-23000.0, -22500.0), FVector2D(-10000.0, -21500.0), &Control);
 		}
-	}
+	};
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoAuditCleanCityTest, "Chronopolis.Audit.GeneratedCityIsClean",
@@ -180,6 +180,114 @@ bool FChronoAuditCleanCityTest::RunTest(const FString& Parameters)
 	const EChronoRoadBuildResult Overlap = City.Build(FVector2D(-19000.0, -4000.0), FVector2D(19000.0, -4000.0));
 	TestTrue(TEXT("A road laid along another one is refused"), Overlap != EChronoRoadBuildResult::Success);
 	TestEqual(TEXT("A refused road changes nothing"), City.Graph.GetSegments().Num(), SegmentsBefore);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoAuditRandomRoadsTest, "Chronopolis.Audit.RandomRoadsStayClean",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter)
+
+bool FChronoAuditRandomRoadsTest::RunTest(const FString& Parameters)
+{
+	// A tidy street grid only exercises right angles. Here roads are thrown
+	// at random on rough ground: straight and curved, two road widths, half of
+	// them chained from the end of the previous one. Most are refused, which
+	// is the point: whatever is accepted must leave the city clean.
+	const int32 NumSeeds = 4;
+	const int32 AttemptsPerSeed = 300;
+	const float ReliefAmplitudeCm = 800.0f;
+
+	TArray<FChronoBuildingDefData> Definitions;
+	FChronoBuildingDefData House;
+	House.DefId = TEXT("TestHouse");
+	House.Zone = EChronoZoneType::Residential;
+	House.Roof = EChronoRoofType::Gable;
+	Definitions.Add(House);
+	FChronoBuildingDefData Block;
+	Block.DefId = TEXT("TestBlock");
+	Block.Zone = EChronoZoneType::Residential;
+	Block.WidthCells = 2;
+	Block.DepthCells = 2;
+	Block.MaxFloors = 4;
+	Definitions.Add(Block);
+
+	for (int32 Seed = 1; Seed <= NumSeeds; ++Seed)
+	{
+		FChronoHeightfield Heightfield;
+		Heightfield.Init(256, 200.0f, 0.0f);
+		Heightfield.GenerateNoise(Seed, ReliefAmplitudeCm, 30000.0f, -5000.0f, 30000.0f);
+
+		FChronoRoadGraph Graph;
+		FChronoRoadRules Rules;
+		Rules.ApplyTo(Graph);
+		FChronoZoneGrid Zoning;
+		FChronoZoningRules ZoningRules;
+		FChronoBuildingSet Buildings;
+		FChronoBuildingRules BuildingRules;
+
+		FRandomStream Random(Seed * 977);
+		FVector2D Last = FVector2D::ZeroVector;
+		int32 NumBuilt = 0;
+
+		for (int32 Attempt = 0; Attempt < AttemptsPerSeed; ++Attempt)
+		{
+			FChronoRoadBuildRequest Request;
+			Request.Start = (Attempt % 2 == 0) ? Last : FVector2D(Random.FRandRange(-22000.0f, 22000.0f), Random.FRandRange(-22000.0f, 22000.0f));
+
+			const double Angle = Random.FRandRange(0.0f, 2.0f * UE_PI);
+			const double Length = Random.FRandRange(2500.0f, 14000.0f);
+			const FVector2D Direction(FMath::Cos(Angle), FMath::Sin(Angle));
+			Request.End = Request.Start + Direction * Length;
+
+			Request.bCurved = Random.FRandRange(0.0f, 1.0f) < 0.4f;
+			const FVector2D Sideways(-Direction.Y, Direction.X);
+			Request.Control = (Request.Start + Request.End) * 0.5 + Sideways * (Random.FRandRange(-0.35f, 0.35f) * Length);
+
+			// One road in three is a narrow path without sidewalks.
+			const bool bPath = (Attempt % 3 == 0);
+			Request.Profile.ProfileId = bPath ? TEXT("TestPath") : TEXT("TestStreet");
+			Request.Profile.CarriagewayWidthCm = bPath ? 400.0f : 700.0f;
+			Request.Profile.SidewalkWidthCm = bPath ? 0.0f : 200.0f;
+
+			FChronoRoadGraph Scratch = Graph;
+			Scratch.ClearChanges();
+			int32 SegmentId = INDEX_NONE;
+			if (ChronoRoadBuilder::ApplyAndValidate(Scratch, Heightfield, Rules, Request, SegmentId) != EChronoRoadBuildResult::Success)
+			{
+				continue;
+			}
+
+			Graph = MoveTemp(Scratch);
+			const FChronoRoadChangeSet Changes = ChronoRoadBuilder::TakeChanges(Graph);
+			ChronoRoadBuilder::ConformTerrain(Graph, Changes, Rules, Heightfield);
+			Zoning.ApplyRoadChanges(Graph, Heightfield, Changes, ZoningRules);
+			Buildings.RemoveInvalid(Zoning, Zoning.TakeDirtySegments());
+			Buildings.RefreshHeights(Heightfield, FBox2D(FVector2D(-30000.0, -30000.0), FVector2D(30000.0, 30000.0)), BuildingRules);
+			Last = Request.End;
+			++NumBuilt;
+
+			// The city grows between two roads, so later roads cut through buildings.
+			Zoning.PaintZone(FVector2D::ZeroVector, 40000.0f, EChronoZoneType::Residential);
+			Zoning.TakeDirtySegments();
+			FRandomStream Growth(Seed * 31 + Attempt);
+			Buildings.Grow(Zoning, Heightfield, Graph, Definitions, BuildingRules, Growth, 6);
+		}
+
+		TArray<FChronoAuditIssue> Issues;
+		const FChronoAuditSettings AuditSettings;
+		ChronoClippingAudit::Run(Heightfield, Graph, Rules, AuditSettings, Issues);
+		ChronoClippingAudit::RunZoning(Graph, Zoning, ZoningRules, AuditSettings, Issues);
+		ChronoClippingAudit::RunBuildings(Heightfield, Graph, Zoning, Buildings, BuildingRules, AuditSettings, Issues);
+
+		AddInfo(FString::Printf(TEXT("Seed %d: %d roads accepted, %d segments, %d cells, %d buildings, %d issues"), Seed, NumBuilt, Graph.GetSegments().Num(), Zoning.GetNumCells(), Buildings.GetNumBuildings(), Issues.Num()));
+		for (const FChronoAuditIssue& Issue : Issues)
+		{
+			AddError(FString::Printf(TEXT("Seed %d: [%s] %s at %s"), Seed, *Issue.Rule.ToString(), *Issue.Description, *Issue.Location.ToCompactString()));
+		}
+
+		TestTrue(TEXT("Random roads build a real network"), NumBuilt >= 20);
+		TestEqual(TEXT("Audit of a random city reports nothing"), Issues.Num(), 0);
+	}
 
 	return true;
 }
