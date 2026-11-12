@@ -76,6 +76,9 @@ public:
 	const TMap<int32, FChronoZoneCell>& GetCells() const { return Cells; }
 	const FChronoZoneCell* FindCell(int32 CellId) const { return Cells.Find(CellId); }
 
+	/** Cell at a given place along a segment, or null. Stable across grid updates, unlike cell ids. */
+	const FChronoZoneCell* FindCellByKey(int32 SegmentId, int32 Side, int32 Slot, int32 Row) const;
+
 	/** Ids of the cells that front on a segment (empty if none). */
 	TConstArrayView<int32> GetSegmentCells(int32 SegmentId) const;
 

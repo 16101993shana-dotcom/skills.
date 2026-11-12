@@ -7,9 +7,11 @@
 
 #include "CoreMinimal.h"
 
+class FChronoBuildingSet;
 class FChronoRoadGraph;
 class FChronoZoneGrid;
 struct FChronoHeightfield;
+struct FChronoBuildingRules;
 struct FChronoRoadRules;
 struct FChronoZoningRules;
 
@@ -49,6 +51,16 @@ namespace ChronoAuditRule
 	CHRONOAUDIT_API extern const FName ZoneCellOverlap;
 	/** A zoning cell fronts on a road that no longer exists. */
 	CHRONOAUDIT_API extern const FName ZoneCellOrphan;
+	/** The walls of a building touch a road or a junction. */
+	CHRONOAUDIT_API extern const FName BuildingOnRoad;
+	/** The walls of two buildings overlap. */
+	CHRONOAUDIT_API extern const FName BuildingOverlap;
+	/** The ground rises above the floor of a building. */
+	CHRONOAUDIT_API extern const FName BuildingBuried;
+	/** The ground is below the foundation of a building: a gap is visible under it. */
+	CHRONOAUDIT_API extern const FName BuildingFloating;
+	/** A building stands on cells that no longer exist or have another zone. */
+	CHRONOAUDIT_API extern const FName BuildingWithoutLot;
 }
 
 struct CHRONOAUDIT_API FChronoAuditSettings
@@ -70,6 +82,9 @@ namespace ChronoClippingAudit
 {
 	/** Zoning cells against roads and against each other. Returns the number of issues added to OutIssues. */
 	CHRONOAUDIT_API int32 RunZoning(const FChronoRoadGraph& Graph, const FChronoZoneGrid& Grid, const FChronoZoningRules& ZoningRules, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues);
+
+	/** Buildings against roads, terrain, their lot and each other. Returns the number of issues added to OutIssues. */
+	CHRONOAUDIT_API int32 RunBuildings(const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneGrid& Grid, const FChronoBuildingSet& Buildings, const FChronoBuildingRules& BuildingRules, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues);
 
 	/** Terrain and roads. Returns the number of issues added to OutIssues. */
 	CHRONOAUDIT_API int32 Run(const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoRoadRules& Rules, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues);

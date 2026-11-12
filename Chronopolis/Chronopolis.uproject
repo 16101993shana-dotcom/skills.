@@ -9,6 +9,7 @@
 		{ "Name": "ChronoTerrain", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoRoads", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoZoning", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoBuildings", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoAudit", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoSave", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoGame", "Type": "Runtime", "LoadingPhase": "Default" }

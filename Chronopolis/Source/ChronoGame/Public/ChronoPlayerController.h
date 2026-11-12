@@ -49,6 +49,14 @@ public:
 	UFUNCTION(Exec)
 	void ChronoZone(int32 ZoneIndex);
 
+	/** Console: ChronoSun <pitch> <yaw>, in degrees (pitch -90 = noon, close to 0 = sunset). */
+	UFUNCTION(Exec)
+	void ChronoSun(float PitchDegrees, float YawDegrees);
+
+	/** Console: ChronoGrow <count> lets up to that many buildings appear now. */
+	UFUNCTION(Exec)
+	void ChronoGrow(int32 Count);
+
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
 	void SetToolMode(EChronoToolMode NewMode);
 

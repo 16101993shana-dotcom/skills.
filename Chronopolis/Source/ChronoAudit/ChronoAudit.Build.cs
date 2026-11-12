@@ -14,7 +14,8 @@ public class ChronoAudit : ModuleRules
 			"ChronoCore",
 			"ChronoTerrain",
 			"ChronoRoads",
-			"ChronoZoning"
+			"ChronoZoning",
+			"ChronoBuildings"
 		});
 	}
 }

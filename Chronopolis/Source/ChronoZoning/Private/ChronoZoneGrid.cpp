@@ -119,6 +119,19 @@ TConstArrayView<int32> FChronoZoneGrid::GetSegmentCells(int32 SegmentId) const
 	return Found ? TConstArrayView<int32>(*Found) : TConstArrayView<int32>();
 }
 
+const FChronoZoneCell* FChronoZoneGrid::FindCellByKey(int32 SegmentId, int32 Side, int32 Slot, int32 Row) const
+{
+	for (const int32 CellId : GetSegmentCells(SegmentId))
+	{
+		const FChronoZoneCell& Cell = Cells.FindChecked(CellId);
+		if (Cell.Side == Side && Cell.Slot == Slot && Cell.Row == Row)
+		{
+			return &Cell;
+		}
+	}
+	return nullptr;
+}
+
 FChronoOrientedBox2D FChronoZoneGrid::GetCellBox(const FChronoZoneCell& Cell) const
 {
 	const double Half = 0.5 * CellSizeCm;

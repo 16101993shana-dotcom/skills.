@@ -1,6 +1,8 @@
 #include "ChronoPlayerController.h"
 
+#include "ChronoBuildingSubsystem.h"
 #include "ChronoCore.h"
+#include "ChronoEnvironmentActor.h"
 #include "ChronoRoadGeometry.h"
 #include "ChronoRoadSubsystem.h"
 #include "ChronoRoadTypes.h"
@@ -10,6 +12,7 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/LocalPlayer.h"
+#include "EngineUtils.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -405,4 +408,21 @@ void AChronoPlayerController::DrawRoadPreview() const
 		Previous = Current;
 	}
 #endif
+}
+
+void AChronoPlayerController::ChronoSun(float PitchDegrees, float YawDegrees)
+{
+	for (TActorIterator<AChronoEnvironmentActor> It(GetWorld()); It; ++It)
+	{
+		It->SetSunAngles(PitchDegrees, YawDegrees);
+	}
+}
+
+void AChronoPlayerController::ChronoGrow(int32 Count)
+{
+	if (UChronoBuildingSubsystem* Buildings = GetWorld()->GetSubsystem<UChronoBuildingSubsystem>())
+	{
+		const int32 NumCreated = Buildings->GrowNow(Count);
+		ShowToolMessage(FText::AsNumber(NumCreated), false);
+	}
 }

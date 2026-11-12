@@ -1,5 +1,6 @@
 #include "ChronoClippingAudit.h"
 
+#include "ChronoBuildingSet.h"
 #include "ChronoHeightfield.h"
 #include "ChronoRoadBuilder.h"
 #include "ChronoRoadGeometry.h"
@@ -19,6 +20,11 @@ namespace ChronoAuditRule
 	const FName ZoneCellOnRoad(TEXT("ZoneCellOnRoad"));
 	const FName ZoneCellOverlap(TEXT("ZoneCellOverlap"));
 	const FName ZoneCellOrphan(TEXT("ZoneCellOrphan"));
+	const FName BuildingOnRoad(TEXT("BuildingOnRoad"));
+	const FName BuildingOverlap(TEXT("BuildingOverlap"));
+	const FName BuildingBuried(TEXT("BuildingBuried"));
+	const FName BuildingFloating(TEXT("BuildingFloating"));
+	const FName BuildingWithoutLot(TEXT("BuildingWithoutLot"));
 }
 
 namespace ChronoClippingAuditPrivate
@@ -369,6 +375,96 @@ int32 ChronoClippingAudit::RunZoning(const FChronoRoadGraph& Graph, const FChron
 						Add(ChronoAuditRule::ZoneCellOverlap, Cell.Center, FString::Printf(TEXT("Cell %d overlaps cell %d"), CellId, OtherId));
 					}
 				}
+			}
+		}
+	}
+
+	return NumAdded;
+}
+
+int32 ChronoClippingAudit::RunBuildings(const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneGrid& Grid, const FChronoBuildingSet& Buildings, const FChronoBuildingRules& BuildingRules, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues)
+{
+	int32 NumAdded = 0;
+	auto Add = [&OutIssues, &Settings, &NumAdded](const FName& Rule, const FChronoBuilding& Building, FString&& Description)
+	{
+		if (OutIssues.Num() < Settings.MaxIssues)
+		{
+			FChronoAuditIssue& Issue = OutIssues.AddDefaulted_GetRef();
+			Issue.Rule = Rule;
+			Issue.Location = FVector(Building.Footprint.Center.X, Building.Footprint.Center.Y, Building.FloorHeightCm);
+			Issue.Description = MoveTemp(Description);
+			++NumAdded;
+		}
+	};
+
+	// In id order, so the report is the same from one run to the next.
+	TArray<int32> BuildingIds;
+	Buildings.GetBuildings().GetKeys(BuildingIds);
+	BuildingIds.Sort();
+
+	// Number of ground samples along each side of a footprint.
+	const int32 GroundSamplesPerSide = 9;
+
+	for (int32 IndexA = 0; IndexA < BuildingIds.Num() && OutIssues.Num() < Settings.MaxIssues; ++IndexA)
+	{
+		const FChronoBuilding& Building = Buildings.GetBuildings().FindChecked(BuildingIds[IndexA]);
+		const FChronoOrientedBox2D& Footprint = Building.Footprint;
+
+		// Lot: every cell still exists, with the zone of the building.
+		bool bLotIntact = true;
+		for (int32 Slot = Building.FirstSlot; Slot < Building.FirstSlot + Building.WidthCells && bLotIntact; ++Slot)
+		{
+			for (int32 Row = 0; Row < Building.DepthCells && bLotIntact; ++Row)
+			{
+				const FChronoZoneCell* Cell = Grid.FindCellByKey(Building.SegmentId, Building.Side, Slot, Row);
+				bLotIntact = Cell && Cell->Zone == Building.Zone;
+			}
+		}
+		if (!bLotIntact)
+		{
+			Add(ChronoAuditRule::BuildingWithoutLot, Building, FString::Printf(TEXT("Building %d (%s) has lost part of its lot on segment %d"), Building.Id, *Building.DefId.ToString(), Building.SegmentId));
+		}
+
+		// Roads. Half of the allowed clearance leaves room for numerical noise.
+		if (!ChronoZoning::IsBoxClearOfRoads(Graph, Footprint, 0.5 * BuildingRules.RoadClearanceCm, BuildingRules.RoadSampleSpacingCm))
+		{
+			Add(ChronoAuditRule::BuildingOnRoad, Building, FString::Printf(TEXT("Building %d (%s) touches a road or a junction"), Building.Id, *Building.DefId.ToString()));
+		}
+
+		// Ground under the walls and across the floor.
+		const FVector2D AxisX = Footprint.GetAxisX() * Footprint.HalfExtent.X;
+		const FVector2D AxisY = Footprint.GetAxisY() * Footprint.HalfExtent.Y;
+		double MinGround = TNumericLimits<double>::Max();
+		double MaxGround = TNumericLimits<double>::Lowest();
+		for (int32 Y = 0; Y < GroundSamplesPerSide; ++Y)
+		{
+			for (int32 X = 0; X < GroundSamplesPerSide; ++X)
+			{
+				const double U = 2.0 * X / (GroundSamplesPerSide - 1) - 1.0;
+				const double V = 2.0 * Y / (GroundSamplesPerSide - 1) - 1.0;
+				const double Ground = Heightfield.SampleHeight(Footprint.Center + AxisX * U + AxisY * V);
+				MinGround = FMath::Min(MinGround, Ground);
+				MaxGround = FMath::Max(MaxGround, Ground);
+			}
+		}
+		if (MaxGround > Building.FloorHeightCm)
+		{
+			Add(ChronoAuditRule::BuildingBuried, Building, FString::Printf(TEXT("Building %d (%s): ground at %.1f cm, floor at %.1f cm"), Building.Id, *Building.DefId.ToString(), MaxGround, Building.FloorHeightCm));
+		}
+		if (MinGround < Building.FoundationBottomCm)
+		{
+			Add(ChronoAuditRule::BuildingFloating, Building, FString::Printf(TEXT("Building %d (%s): ground at %.1f cm, foundation ends at %.1f cm"), Building.Id, *Building.DefId.ToString(), MinGround, Building.FoundationBottomCm));
+		}
+
+		// Other buildings. Every pair is tested, without the spatial index of
+		// the set: a broken index must not hide an overlap.
+		const FBox2D BoundsA = Footprint.GetBounds();
+		for (int32 IndexB = IndexA + 1; IndexB < BuildingIds.Num(); ++IndexB)
+		{
+			const FChronoBuilding& Other = Buildings.GetBuildings().FindChecked(BuildingIds[IndexB]);
+			if (BoundsA.Intersect(Other.Footprint.GetBounds()) && FChronoOrientedBox2D::Overlap(Footprint, Other.Footprint, Settings.OverlapToleranceCm + BuildingRules.OverlapToleranceCm))
+			{
+				Add(ChronoAuditRule::BuildingOverlap, Building, FString::Printf(TEXT("Building %d overlaps building %d"), Building.Id, Other.Id));
 			}
 		}
 	}

@@ -1,5 +1,7 @@
 #include "ChronoSaveSubsystem.h"
 
+#include "ChronoBuildingSet.h"
+#include "ChronoBuildingSubsystem.h"
 #include "ChronoCore.h"
 #include "ChronoHeightfield.h"
 #include "ChronoRoadGraph.h"
@@ -22,8 +24,8 @@ namespace ChronoSavePrivate
 
 	// Bump when a block is added or changed. Older files are refused for now;
 	// migration code goes here when the format has shipped.
-	// Version 2 adds the zoning grid after the roads.
-	const int32 FileVersion = 2;
+	// Version 2 adds the zoning grid after the roads, version 3 the buildings.
+	const int32 FileVersion = 3;
 
 	const TCHAR* DefaultSlot = TEXT("quicksave");
 
@@ -84,7 +86,8 @@ bool UChronoSaveSubsystem::SaveGame(const FString& SlotName)
 	UChronoTerrainSubsystem* Terrain = World ? World->GetSubsystem<UChronoTerrainSubsystem>() : nullptr;
 	UChronoRoadSubsystem* Roads = World ? World->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
 	UChronoZoningSubsystem* Zoning = World ? World->GetSubsystem<UChronoZoningSubsystem>() : nullptr;
-	if (!Simulation || !Terrain || !Roads || !Zoning)
+	UChronoBuildingSubsystem* Buildings = World ? World->GetSubsystem<UChronoBuildingSubsystem>() : nullptr;
+	if (!Simulation || !Terrain || !Roads || !Zoning || !Buildings)
 	{
 		UE_LOG(LogChrono, Error, TEXT("Save failed: the game systems are not running"));
 		return false;
@@ -103,7 +106,8 @@ bool UChronoSaveSubsystem::SaveGame(const FString& SlotName)
 	const bool bTerrainSaved = Terrain->SerializeTerrain(Writer);
 	const bool bRoadsSaved = Roads->SerializeRoads(Writer);
 	const bool bZoningSaved = Zoning->SerializeZoning(Writer);
-	if (!bTerrainSaved || !bRoadsSaved || !bZoningSaved || Writer.IsError())
+	const bool bBuildingsSaved = Buildings->SerializeBuildings(Writer);
+	if (!bTerrainSaved || !bRoadsSaved || !bZoningSaved || !bBuildingsSaved || Writer.IsError())
 	{
 		UE_LOG(LogChrono, Error, TEXT("Save failed: could not serialize the game state"));
 		return false;
@@ -127,7 +131,8 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 	UChronoTerrainSubsystem* Terrain = World ? World->GetSubsystem<UChronoTerrainSubsystem>() : nullptr;
 	UChronoRoadSubsystem* Roads = World ? World->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
 	UChronoZoningSubsystem* Zoning = World ? World->GetSubsystem<UChronoZoningSubsystem>() : nullptr;
-	if (!Simulation || !Terrain || !Roads || !Zoning)
+	UChronoBuildingSubsystem* Buildings = World ? World->GetSubsystem<UChronoBuildingSubsystem>() : nullptr;
+	if (!Simulation || !Terrain || !Roads || !Zoning || !Buildings)
 	{
 		UE_LOG(LogChrono, Error, TEXT("Load failed: the game systems are not running"));
 		return false;
@@ -175,13 +180,15 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 		const bool bRoadsValid = ProbeRoads.Serialize(Probe);
 		FChronoZoneGrid ProbeZoning;
 		const bool bZoningValid = ProbeZoning.Serialize(Probe);
+		FChronoBuildingSet ProbeBuildings;
+		const bool bBuildingsValid = ProbeBuildings.Serialize(Probe);
 
 		const FChronoHeightfield& Current = Terrain->GetHeightfield();
 		const bool bSameSize = ProbeTerrain.IsValid()
 			&& ProbeTerrain.GetSizeCells() == Current.GetSizeCells()
 			&& FMath::IsNearlyEqual(ProbeTerrain.GetCellSizeCm(), Current.GetCellSizeCm());
 
-		if (Probe.IsError() || !bRoadsValid || !bZoningValid || !bSameSize || TickIndex < 0)
+		if (Probe.IsError() || !bRoadsValid || !bZoningValid || !bBuildingsValid || !bSameSize || TickIndex < 0)
 		{
 			UE_LOG(LogChrono, Error, TEXT("Load failed: %s is damaged or was saved on a map of another size"), *Path);
 			return false;
@@ -200,7 +207,11 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 	// Loading the roads lays out fresh cells; the saved grid then replaces
 	// them, with the zones the player had painted.
 	const bool bZoningLoaded = bRoadsLoaded && Zoning->SerializeZoning(Reader);
-	if (!bZoningLoaded)
+
+	// Buildings last: loading the zoning has cleared the buildings whose lot
+	// changed, and the saved set then replaces whatever is left.
+	const bool bBuildingsLoaded = bZoningLoaded && Buildings->SerializeBuildings(Reader);
+	if (!bBuildingsLoaded)
 	{
 		// Should not happen after a successful dry run.
 		UE_LOG(LogChrono, Error, TEXT("Load failed while applying %s"), *Path);

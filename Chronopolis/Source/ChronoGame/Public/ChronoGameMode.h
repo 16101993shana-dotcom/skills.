@@ -12,4 +12,6 @@ class CHRONOGAME_API AChronoGameMode : public AGameModeBase
 
 public:
 	AChronoGameMode();
+
+	virtual void StartPlay() override;
 };

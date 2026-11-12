@@ -3,6 +3,7 @@
 // rules as the game, then requires the audit to find nothing.
 // Filter: "Chronopolis.Audit".
 
+#include "ChronoBuildingSet.h"
 #include "ChronoClippingAudit.h"
 #include "ChronoHeightfield.h"
 #include "ChronoRoadBuilder.h"
@@ -21,6 +22,8 @@ namespace ChronoAuditTests
 		FChronoRoadRules Rules;
 		FChronoZoneGrid Zoning;
 		FChronoZoningRules ZoningRules;
+		FChronoBuildingSet Buildings;
+		FChronoBuildingRules BuildingRules;
 		int32 NumBuilt = 0;
 		int32 NumRefused = 0;
 
@@ -63,6 +66,8 @@ namespace ChronoAuditTests
 			const FChronoRoadChangeSet Changes = ChronoRoadBuilder::TakeChanges(Graph);
 			ChronoRoadBuilder::ConformTerrain(Graph, Changes, Rules, Heightfield);
 			Zoning.ApplyRoadChanges(Graph, Heightfield, Changes, ZoningRules);
+			Buildings.RemoveInvalid(Zoning, Zoning.TakeDirtySegments());
+			Buildings.RefreshHeights(Heightfield, FBox2D(FVector2D(-30000.0, -30000.0), FVector2D(30000.0, 30000.0)), BuildingRules);
 			++NumBuilt;
 			return Result;
 		}
@@ -130,6 +135,44 @@ bool FChronoAuditCleanCityTest::RunTest(const FString& Parameters)
 		AddError(FString::Printf(TEXT("[%s] %s at %s"), *Issue.Rule.ToString(), *Issue.Description, *Issue.Location.ToCompactString()));
 	}
 	TestEqual(TEXT("Zoning audit reports nothing"), ZoningIssues.Num(), 0);
+
+	// Buildings grown on those cells, then a new road laid through the city:
+	// buildings in its way go, the others are re-seated on the reshaped ground.
+	TArray<FChronoBuildingDefData> Definitions;
+	FChronoBuildingDefData House;
+	House.DefId = TEXT("TestHouse");
+	House.Zone = EChronoZoneType::Residential;
+	House.Roof = EChronoRoofType::Gable;
+	Definitions.Add(House);
+	FChronoBuildingDefData Block;
+	Block.DefId = TEXT("TestBlock");
+	Block.Zone = EChronoZoneType::Residential;
+	Block.WidthCells = 2;
+	Block.DepthCells = 2;
+	Block.MaxFloors = 4;
+	Definitions.Add(Block);
+
+	City.Zoning.PaintZone(FVector2D(0.0, 0.0), 40000.0f, EChronoZoneType::Residential);
+	City.Zoning.TakeDirtySegments();
+	for (int32 Step = 0; Step < 60; ++Step)
+	{
+		FRandomStream Random(500 + Step);
+		City.Buildings.Grow(City.Zoning, City.Heightfield, City.Graph, Definitions, City.BuildingRules, Random, 4);
+	}
+	AddInfo(FString::Printf(TEXT("Buildings: %d"), City.Buildings.GetNumBuildings()));
+	TestTrue(TEXT("The scenario contains buildings"), City.Buildings.GetNumBuildings() >= 50);
+
+	City.Build(FVector2D(0.0, -15000.0), FVector2D(0.0, -5000.0));
+
+	TArray<FChronoAuditIssue> BuildingIssues;
+	ChronoClippingAudit::RunBuildings(City.Heightfield, City.Graph, City.Zoning, City.Buildings, City.BuildingRules, FChronoAuditSettings(), BuildingIssues);
+	ChronoClippingAudit::Run(City.Heightfield, City.Graph, City.Rules, FChronoAuditSettings(), BuildingIssues);
+	ChronoClippingAudit::RunZoning(City.Graph, City.Zoning, City.ZoningRules, FChronoAuditSettings(), BuildingIssues);
+	for (const FChronoAuditIssue& Issue : BuildingIssues)
+	{
+		AddError(FString::Printf(TEXT("[%s] %s at %s"), *Issue.Rule.ToString(), *Issue.Description, *Issue.Location.ToCompactString()));
+	}
+	TestEqual(TEXT("Audit with buildings reports nothing"), BuildingIssues.Num(), 0);
 
 	// A refused road must leave no trace: an overlapping road is rejected and
 	// the audit is still clean afterwards.

@@ -12,11 +12,13 @@ public class ChronoGame : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
+			"DeveloperSettings",
 			"EnhancedInput",
 			"ChronoCore",
 			"ChronoTerrain",
 			"ChronoRoads",
-			"ChronoZoning"
+			"ChronoZoning",
+			"ChronoBuildings"
 		});
 	}
 }
