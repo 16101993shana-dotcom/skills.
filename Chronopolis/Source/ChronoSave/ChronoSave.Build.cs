@@ -15,7 +15,9 @@ public class ChronoSave : ModuleRules
 			"ChronoTerrain",
 			"ChronoRoads",
 			"ChronoZoning",
-			"ChronoBuildings"
+			"ChronoBuildings",
+			"ChronoCitizens",
+			"ChronoEconomy"
 		});
 	}
 }

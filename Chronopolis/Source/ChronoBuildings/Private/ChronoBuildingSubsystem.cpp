@@ -138,12 +138,23 @@ int32 UChronoBuildingSubsystem::GrowStep(int64 TickIndex, int32 MaxNewBuildings)
 	const int32 StepSeed = GrowthSeed ^ static_cast<int32>(TickIndex & 0x7FFFFFFF) ^ (Buildings.GetNumBuildings() * 7919);
 	FRandomStream Random(StepSeed);
 
-	const int32 NumCreated = Buildings.Grow(Zoning->GetGrid(), Terrain->GetHeightfield(), Roads->GetGraph(), Definitions, Rules, Random, MaxNewBuildings);
+	const int32 NumCreated = Buildings.Grow(Zoning->GetGrid(), Terrain->GetHeightfield(), Roads->GetGraph(), Definitions, Rules, Random, MaxNewBuildings, bHasZoneDemand ? &ZoneDemand : nullptr);
 	if (NumCreated > 0)
 	{
 		BroadcastChanges();
 	}
 	return NumCreated;
+}
+
+void UChronoBuildingSubsystem::SetZoneDemand(const FChronoZoneDemand& InDemand)
+{
+	ZoneDemand = InDemand;
+	bHasZoneDemand = true;
+}
+
+float UChronoBuildingSubsystem::GetZoneDemand(EChronoZoneType Zone) const
+{
+	return (bHasZoneDemand && Zone < EChronoZoneType::Count) ? ZoneDemand.Get(Zone) : 1.0f;
 }
 
 void UChronoBuildingSubsystem::HandleZoningChanged(const TArray<int32>& SegmentIds)

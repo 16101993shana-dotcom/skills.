@@ -18,7 +18,9 @@ public class ChronoGame : ModuleRules
 			"ChronoTerrain",
 			"ChronoRoads",
 			"ChronoZoning",
-			"ChronoBuildings"
+			"ChronoBuildings",
+			"ChronoCitizens",
+			"ChronoEconomy"
 		});
 	}
 }

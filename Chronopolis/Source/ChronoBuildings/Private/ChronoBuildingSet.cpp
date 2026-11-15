@@ -202,7 +202,7 @@ float FChronoBuildingSet::ComputeLandValue(const FVector2D& Point, bool bFrontsO
 	return FMath::Clamp(Value, 0.0f, Rules.MaxLandValue);
 }
 
-int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxNewBuildings)
+int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxNewBuildings, const FChronoZoneDemand* Demand)
 {
 	if (MaxNewBuildings <= 0 || Definitions.Num() == 0)
 	{
@@ -217,7 +217,11 @@ int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightf
 		const FChronoZoneCell& Cell = Pair.Value;
 		if (Cell.Row == 0 && Cell.Zone != EChronoZoneType::None && !IsCellOccupied(Cell.SegmentId, Cell.Side, Cell.Slot, 0))
 		{
-			Anchors.Add(Pair.Key);
+			// Zones nobody wants are not even considered.
+			if (!Demand || Demand->Get(Cell.Zone) > 0.0f)
+			{
+				Anchors.Add(Pair.Key);
+			}
 		}
 	}
 	Anchors.Sort();
@@ -233,6 +237,12 @@ int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightf
 		const FChronoZoneCell* Anchor = Grid.FindCell(Anchors[AnchorIndex]);
 		Anchors.RemoveAtSwap(AnchorIndex);
 		if (!Anchor || IsCellOccupied(Anchor->SegmentId, Anchor->Side, Anchor->Slot, 0))
+		{
+			continue;
+		}
+
+		// The stronger the demand for a zone, the more often its lots are built.
+		if (Demand && Random.FRandRange(0.0f, 1.0f) > Demand->Get(Anchor->Zone))
 		{
 			continue;
 		}
@@ -381,6 +391,7 @@ bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeig
 	Building.Footprint = Footprint;
 	Building.FloorHeightCm = static_cast<double>(MaxGround) + Rules.FloorLiftCm;
 	Building.FoundationBottomCm = static_cast<double>(MinGround) - Rules.FoundationDepthCm;
+	Building.Floors = Floors;
 	Building.BodyHeightCm = Floors * Definition.FloorHeightCm;
 	Building.Roof = Definition.Roof;
 	Building.RoofHeightCm = Definition.RoofHeightCm;
@@ -481,8 +492,8 @@ void FChronoBuildingSet::RebuildIndices()
 
 bool FChronoBuildingSet::Serialize(FArchive& Ar)
 {
-	// Bump when the binary layout changes.
-	const int32 CurrentVersion = 1;
+	// Bump when the binary layout changes. Version 2 adds the floor count.
+	const int32 CurrentVersion = 2;
 	// Sanity bounds on values read from a file.
 	const int32 MaxBuildings = 4 * 1024 * 1024;
 	const int32 MaxLotCells = 64;
@@ -538,6 +549,7 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 		Ar << Building.Footprint.YawRadians;
 		Ar << Building.FloorHeightCm;
 		Ar << Building.FoundationBottomCm;
+		Ar << Building.Floors;
 		Ar << Building.BodyHeightCm;
 		Ar << RoofByte;
 		Ar << Building.RoofHeightCm;
@@ -555,6 +567,7 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 				&& Building.WidthCells >= 1 && Building.DepthCells >= 1
 				&& Building.WidthCells * Building.DepthCells <= MaxLotCells
 				&& Building.Footprint.HalfExtent.X > 0.0 && Building.Footprint.HalfExtent.Y > 0.0
+				&& Building.Floors >= 1 && Building.Floors <= 400
 				&& Building.BodyHeightCm > 0.0f
 				&& Building.FoundationBottomCm <= Building.FloorHeightCm;
 			if (bValid)

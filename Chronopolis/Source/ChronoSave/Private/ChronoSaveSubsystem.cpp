@@ -1,9 +1,13 @@
 #include "ChronoSaveSubsystem.h"
 
 #include "ChronoBuildingSet.h"
+#include "ChronoBudget.h"
 #include "ChronoBuildingSubsystem.h"
 #include "ChronoCore.h"
+#include "ChronoEconomySubsystem.h"
 #include "ChronoHeightfield.h"
+#include "ChronoPopulation.h"
+#include "ChronoPopulationSubsystem.h"
 #include "ChronoRoadGraph.h"
 #include "ChronoRoadSubsystem.h"
 #include "ChronoSimulationSubsystem.h"
@@ -24,8 +28,9 @@ namespace ChronoSavePrivate
 
 	// Bump when a block is added or changed. Older files are refused for now;
 	// migration code goes here when the format has shipped.
-	// Version 2 adds the zoning grid after the roads, version 3 the buildings.
-	const int32 FileVersion = 3;
+	// Version 2 adds the zoning grid after the roads, version 3 the buildings,
+	// version 4 the population and the budget.
+	const int32 FileVersion = 4;
 
 	const TCHAR* DefaultSlot = TEXT("quicksave");
 
@@ -87,7 +92,9 @@ bool UChronoSaveSubsystem::SaveGame(const FString& SlotName)
 	UChronoRoadSubsystem* Roads = World ? World->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
 	UChronoZoningSubsystem* Zoning = World ? World->GetSubsystem<UChronoZoningSubsystem>() : nullptr;
 	UChronoBuildingSubsystem* Buildings = World ? World->GetSubsystem<UChronoBuildingSubsystem>() : nullptr;
-	if (!Simulation || !Terrain || !Roads || !Zoning || !Buildings)
+	UChronoPopulationSubsystem* Population = World ? World->GetSubsystem<UChronoPopulationSubsystem>() : nullptr;
+	UChronoEconomySubsystem* Economy = World ? World->GetSubsystem<UChronoEconomySubsystem>() : nullptr;
+	if (!Simulation || !Terrain || !Roads || !Zoning || !Buildings || !Population || !Economy)
 	{
 		UE_LOG(LogChrono, Error, TEXT("Save failed: the game systems are not running"));
 		return false;
@@ -107,7 +114,9 @@ bool UChronoSaveSubsystem::SaveGame(const FString& SlotName)
 	const bool bRoadsSaved = Roads->SerializeRoads(Writer);
 	const bool bZoningSaved = Zoning->SerializeZoning(Writer);
 	const bool bBuildingsSaved = Buildings->SerializeBuildings(Writer);
-	if (!bTerrainSaved || !bRoadsSaved || !bZoningSaved || !bBuildingsSaved || Writer.IsError())
+	const bool bPopulationSaved = Population->SerializePopulation(Writer);
+	const bool bEconomySaved = Economy->SerializeEconomy(Writer);
+	if (!bTerrainSaved || !bRoadsSaved || !bZoningSaved || !bBuildingsSaved || !bPopulationSaved || !bEconomySaved || Writer.IsError())
 	{
 		UE_LOG(LogChrono, Error, TEXT("Save failed: could not serialize the game state"));
 		return false;
@@ -132,7 +141,9 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 	UChronoRoadSubsystem* Roads = World ? World->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
 	UChronoZoningSubsystem* Zoning = World ? World->GetSubsystem<UChronoZoningSubsystem>() : nullptr;
 	UChronoBuildingSubsystem* Buildings = World ? World->GetSubsystem<UChronoBuildingSubsystem>() : nullptr;
-	if (!Simulation || !Terrain || !Roads || !Zoning || !Buildings)
+	UChronoPopulationSubsystem* Population = World ? World->GetSubsystem<UChronoPopulationSubsystem>() : nullptr;
+	UChronoEconomySubsystem* Economy = World ? World->GetSubsystem<UChronoEconomySubsystem>() : nullptr;
+	if (!Simulation || !Terrain || !Roads || !Zoning || !Buildings || !Population || !Economy)
 	{
 		UE_LOG(LogChrono, Error, TEXT("Load failed: the game systems are not running"));
 		return false;
@@ -182,13 +193,17 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 		const bool bZoningValid = ProbeZoning.Serialize(Probe);
 		FChronoBuildingSet ProbeBuildings;
 		const bool bBuildingsValid = ProbeBuildings.Serialize(Probe);
+		FChronoPopulation ProbePopulation;
+		const bool bPopulationValid = ProbePopulation.Serialize(Probe);
+		FChronoBudget ProbeBudget;
+		const bool bBudgetValid = ProbeBudget.Serialize(Probe);
 
 		const FChronoHeightfield& Current = Terrain->GetHeightfield();
 		const bool bSameSize = ProbeTerrain.IsValid()
 			&& ProbeTerrain.GetSizeCells() == Current.GetSizeCells()
 			&& FMath::IsNearlyEqual(ProbeTerrain.GetCellSizeCm(), Current.GetCellSizeCm());
 
-		if (Probe.IsError() || !bRoadsValid || !bZoningValid || !bBuildingsValid || !bSameSize || TickIndex < 0)
+		if (Probe.IsError() || !bRoadsValid || !bZoningValid || !bBuildingsValid || !bPopulationValid || !bBudgetValid || !bSameSize || TickIndex < 0)
 		{
 			UE_LOG(LogChrono, Error, TEXT("Load failed: %s is damaged or was saved on a map of another size"), *Path);
 			return false;
@@ -211,7 +226,13 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 	// Buildings last: loading the zoning has cleared the buildings whose lot
 	// changed, and the saved set then replaces whatever is left.
 	const bool bBuildingsLoaded = bZoningLoaded && Buildings->SerializeBuildings(Reader);
-	if (!bBuildingsLoaded)
+
+	// The population needs the buildings (homes and jobs), the budget needs
+	// nothing but is saved last. The clock is restored before both, so the
+	// population resumes on the right day.
+	const bool bPopulationLoaded = bBuildingsLoaded && Population->SerializePopulation(Reader);
+	const bool bEconomyLoaded = bPopulationLoaded && Economy->SerializeEconomy(Reader);
+	if (!bEconomyLoaded)
 	{
 		// Should not happen after a successful dry run.
 		UE_LOG(LogChrono, Error, TEXT("Load failed while applying %s"), *Path);

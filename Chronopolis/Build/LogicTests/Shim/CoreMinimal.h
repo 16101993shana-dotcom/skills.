@@ -84,6 +84,7 @@ struct FMath {
 	template <typename T> static T RadiansToDegrees(T R) { return R * static_cast<T>(180.0 / UE_DOUBLE_PI); }
 	static int32 DivideAndRoundUp(int32 A, int32 B) { return (A + B - 1) / B; }
 	static double FindDeltaAngleRadians(double A, double B) { double D = B - A; while (D > UE_DOUBLE_PI) D -= 2.0 * UE_DOUBLE_PI; while (D < -UE_DOUBLE_PI) D += 2.0 * UE_DOUBLE_PI; return D; }
+	static bool IsFinite(double X) { return std::isfinite(X); }
 	static float PerlinNoise2D(const struct FVector2D& P);
 };
 

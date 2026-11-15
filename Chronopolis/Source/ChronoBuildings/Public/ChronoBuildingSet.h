@@ -29,9 +29,11 @@ public:
 
 	/**
 	 * Lets up to MaxNewBuildings appear on free zoned lots, picked with Random.
+	 * @param Demand when given, a lot is only built if its zone is in demand,
+	 * with a chance equal to that demand. Null builds on any zoned lot.
 	 * @return the number of buildings created.
 	 */
-	int32 Grow(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxNewBuildings);
+	int32 Grow(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxNewBuildings, const FChronoZoneDemand* Demand = nullptr);
 
 	/**
 	 * Removes the buildings of the given segments whose lot no longer exists

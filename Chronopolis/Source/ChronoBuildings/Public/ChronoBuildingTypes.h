@@ -108,6 +108,9 @@ struct FChronoBuilding
 	/** Bottom of the foundation: below the lowest ground under the building. */
 	double FoundationBottomCm = 0.0;
 
+	/** Number of storeys. Housing and job capacities are derived from it. */
+	int32 Floors = 1;
+
 	/** Height of the walls above the floor. */
 	float BodyHeightCm = 300.0f;
 
@@ -116,6 +119,19 @@ struct FChronoBuilding
 
 	/** Land value when the building appeared. */
 	float LandValue = 0.0f;
+};
+
+/**
+ * How much the city wants more of each zone, from -1 (far too much of it) to
+ * +1 (badly needed). Buildings only grow on zones whose demand is positive,
+ * the more often the higher it is. Indexed by EChronoZoneType.
+ */
+struct CHRONOBUILDINGS_API FChronoZoneDemand
+{
+	float Value[static_cast<int32>(EChronoZoneType::Count)] = {};
+
+	float Get(EChronoZoneType Zone) const { return Value[static_cast<int32>(Zone)]; }
+	void Set(EChronoZoneType Zone, float InValue) { Value[static_cast<int32>(Zone)] = FMath::Clamp(InValue, -1.0f, 1.0f); }
 };
 
 /** Tunables of building placement and land value. In game they come from UChronoBuildingSettings. */

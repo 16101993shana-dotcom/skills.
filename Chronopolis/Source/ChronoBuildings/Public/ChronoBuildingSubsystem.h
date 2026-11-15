@@ -44,6 +44,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Buildings")
 	int32 GrowNow(int32 MaxNewBuildings);
 
+	/**
+	 * Demand per zone, pushed by the population simulation once a day. Until
+	 * it is set, buildings grow on any zoned lot.
+	 */
+	void SetZoneDemand(const FChronoZoneDemand& InDemand);
+
+	/** Demand for a zone, from -1 to +1 (1 while no demand has been set yet). */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
+	float GetZoneDemand(EChronoZoneType Zone) const;
+
 	/** Save and load. Loading replaces every building. Returns false on invalid data. */
 	bool SerializeBuildings(FArchive& Ar);
 
@@ -59,6 +69,9 @@ private:
 	FChronoBuildingSet Buildings;
 	FChronoBuildingRules Rules;
 	TArray<FChronoBuildingDefData> Definitions;
+
+	FChronoZoneDemand ZoneDemand;
+	bool bHasZoneDemand = false;
 
 	int32 GrowthIntervalTicks = 5;
 	int32 GrowthPerStep = 2;
