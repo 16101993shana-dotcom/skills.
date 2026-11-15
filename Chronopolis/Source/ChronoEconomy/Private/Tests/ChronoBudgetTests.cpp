@@ -28,7 +28,7 @@ bool FChronoBudgetTest::RunTest(const FString& Parameters)
 	Stats.WorkersByZone[static_cast<int32>(EChronoZoneType::Civic)] = 50;
 	const double RoadAreaM2 = 50000.0;
 
-	Budget.StepDay(Stats, RoadAreaM2, Rules);
+	Budget.StepDay(Stats, RoadAreaM2, 0.0, Rules);
 	const FChronoLedger& Today = Budget.GetToday();
 
 	// 450 x 1 x 9 % = 40.5; 150 x 2 x 9 % = 27; 150 x 2.5 x 9 % = 33.75; 100 x 1.5 x 9 % = 13.5; 50000 x 0.0008 = 40.
@@ -46,7 +46,7 @@ bool FChronoBudgetTest::RunTest(const FString& Parameters)
 	// The month closes after DaysPerMonth days.
 	for (int32 Day = 1; Day < Rules.DaysPerMonth; ++Day)
 	{
-		Budget.StepDay(Stats, RoadAreaM2, Rules);
+		Budget.StepDay(Stats, RoadAreaM2, 0.0, Rules);
 	}
 	TestEqual(TEXT("A new month starts"), Budget.GetDayOfMonth(), 0);
 	TestTrue(TEXT("Last month holds thirty days of income"), FMath::IsNearlyEqual(Budget.GetLastMonth().GetIncome(), 30.0 * 114.75, 0.01));
@@ -63,10 +63,36 @@ bool FChronoBudgetTest::RunTest(const FString& Parameters)
 		Budget.SetTaxRate(Zone, 0.0f, Rules);
 	}
 	const double Before = Budget.GetTreasury();
-	Budget.StepDay(Stats, RoadAreaM2, Rules);
+	Budget.StepDay(Stats, RoadAreaM2, 0.0, Rules);
 	TestTrue(TEXT("Without taxes the treasury only pays"), FMath::IsNearlyEqual(Budget.GetTreasury(), Before - 40.0, 0.001));
 
-	// Save and load.
+	// Construction: paid at once, shown in the ledger of the next day, never paid twice.
+	Budget.SetTaxRate(EChronoZoneType::Residential, 0.09f, Rules);
+	const double BeforeBuilding = Budget.GetTreasury();
+	TestTrue(TEXT("An affordable construction is paid"), Budget.Spend(500.0));
+	TestTrue(TEXT("The treasury drops by the price"), FMath::IsNearlyEqual(Budget.GetTreasury(), BeforeBuilding - 500.0, 0.001));
+	TestFalse(TEXT("A construction beyond the treasury is refused"), Budget.Spend(1.0e9));
+	Budget.StepDay(Stats, 0.0, 12.0, Rules);
+	TestTrue(TEXT("The construction appears in the ledger"), FMath::IsNearlyEqual(Budget.GetToday().Construction, 500.0, 0.001));
+	TestTrue(TEXT("Service upkeep is paid"), FMath::IsNearlyEqual(Budget.GetToday().ServiceUpkeep, 12.0, 0.001));
+	TestTrue(TEXT("The construction is not paid twice"), FMath::IsNearlyEqual(Budget.GetTreasury(), BeforeBuilding - 500.0 + 40.5 - 12.0, 0.001));
+
+	// Loans: money now, repaid with interest in equal daily payments.
+	const double BeforeLoan = Budget.GetTreasury();
+	TestTrue(TEXT("A loan is granted"), Budget.TakeLoan(10000.0, Rules));
+	TestTrue(TEXT("The treasury receives the loan"), FMath::IsNearlyEqual(Budget.GetTreasury(), BeforeLoan + 10000.0, 0.001));
+	TestTrue(TEXT("The debt includes the interest"), FMath::IsNearlyEqual(Budget.GetDebt(), 11000.0, 0.001));
+	TestFalse(TEXT("A loan beyond the debt limit is refused"), Budget.TakeLoan(45000.0, Rules));
+	Budget.StepDay(Stats, 0.0, 0.0, Rules);
+	TestTrue(TEXT("One day repays one payment"), FMath::IsNearlyEqual(Budget.GetToday().LoanRepayment, 11000.0 / Rules.LoanTermDays, 0.001));
+	for (int32 Day = 1; Day < Rules.LoanTermDays; ++Day)
+	{
+		Budget.StepDay(Stats, 0.0, 0.0, Rules);
+	}
+	TestTrue(TEXT("The loan is repaid at the end of its term"), Budget.GetNumLoans() == 0 && Budget.GetDebt() < 0.001);
+
+	// Save and load, with a loan running.
+	TestTrue(TEXT("A second loan is granted"), Budget.TakeLoan(2000.0, Rules));
 	TArray<uint8> Bytes;
 	FMemoryWriter Writer(Bytes);
 	TestTrue(TEXT("Budget is saved"), Budget.Serialize(Writer));
@@ -75,6 +101,7 @@ bool FChronoBudgetTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Budget is loaded"), Loaded.Serialize(Reader));
 	TestTrue(TEXT("Loaded treasury is the same"), Loaded.GetTreasury() == Budget.GetTreasury());
 	TestTrue(TEXT("Loaded science is the same"), Loaded.GetScience() == Budget.GetScience());
+	TestTrue(TEXT("Loaded debt is the same"), Loaded.GetDebt() == Budget.GetDebt());
 
 	return true;
 }

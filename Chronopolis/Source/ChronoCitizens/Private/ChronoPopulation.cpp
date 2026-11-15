@@ -54,8 +54,30 @@ FChronoPopulationRules FChronoPopulationRules::FromSettings()
 	Rules.TargetAgriculturalJobShare = Settings->TargetAgriculturalJobShare;
 	Rules.TargetCivicJobShare = Settings->TargetCivicJobShare;
 	Rules.DemandTaxSensitivity = Settings->DemandTaxSensitivity;
+	Rules.WaterHappiness = Settings->WaterHappiness;
+	Rules.HealthHappiness = Settings->HealthHappiness;
+	Rules.SecurityHappiness = Settings->SecurityHappiness;
+	Rules.FireHappiness = Settings->FireHappiness;
+	Rules.EducationHappiness = Settings->EducationHappiness;
+	Rules.NoWaterPenalty = Settings->NoWaterPenalty;
 	Rules.Seed = Settings->Seed;
 	return Rules;
+}
+
+float FChronoPopulationRules::GetServiceHappiness(uint32 ServiceMask) const
+{
+	auto Has = [ServiceMask](EChronoServiceType Service)
+	{
+		return (ServiceMask & (1u << static_cast<uint32>(Service))) != 0;
+	};
+
+	float Change = 0.0f;
+	Change += Has(EChronoServiceType::Water) ? WaterHappiness : -NoWaterPenalty;
+	Change += Has(EChronoServiceType::Health) ? HealthHappiness : 0.0f;
+	Change += Has(EChronoServiceType::Security) ? SecurityHappiness : 0.0f;
+	Change += Has(EChronoServiceType::Fire) ? FireHappiness : 0.0f;
+	Change += Has(EChronoServiceType::Education) ? EducationHappiness : 0.0f;
+	return Change;
 }
 
 void FChronoPopulation::ComputeCapacity(const FChronoBuilding& Building, const FChronoPopulationRules& Rules, int32& OutHousingUnits, int32& OutJobs)
@@ -258,6 +280,10 @@ void FChronoPopulation::SyncBuildings(const FChronoBuildingSet& Buildings, const
 		FOccupancy Entry;
 		Entry.Zone = Pair.Value.Zone;
 		ComputeCapacity(Pair.Value, Rules, Entry.HousingUnits, Entry.Jobs);
+		if (Entry.HousingUnits > 0)
+		{
+			Entry.ServiceMask = Buildings.GetServiceMaskAt(Pair.Value.Footprint.Center);
+		}
 		Occupancy.Add(Pair.Key, Entry);
 		BuildingOrder.Add(Pair.Key);
 	}
@@ -425,25 +451,34 @@ void FChronoPopulation::UpdateHappiness(const FChronoCityConditions& Conditions,
 	const float TaxEffect = -TaxPoints * Rules.TaxPenaltyPerPoint;
 	const float Adjust = FMath::Clamp(Rules.HappinessAdjustPerDay, 0.0f, 1.0f);
 
-	for (FChronoCitizen& Citizen : Citizens)
+	// Household by household: everybody under one roof shares its services.
+	for (const FChronoHousehold& Household : Households)
 	{
-		if (Citizen.HouseholdId == INDEX_NONE)
+		if (!Household.bInUse)
 		{
 			continue;
 		}
 
-		float Target = Rules.HappinessBase + TaxEffect;
-		if (Citizen.WorkBuildingId != INDEX_NONE)
-		{
-			Target += Rules.EmployedBonus;
-		}
-		else if (IsWorkingAge(Citizen.AgeYears, Rules))
-		{
-			Target -= Rules.UnemployedPenalty;
-		}
+		const FOccupancy* Home = Occupancy.Find(Household.HomeBuildingId);
+		const float HomeEffect = Rules.GetServiceHappiness(Home ? Home->ServiceMask : 0);
 
-		// Moods change gradually, not overnight.
-		Citizen.Happiness = FMath::Clamp(Citizen.Happiness + (FMath::Clamp(Target, 0.0f, 100.0f) - Citizen.Happiness) * Adjust, 0.0f, 100.0f);
+		for (const int32 CitizenId : Household.Members)
+		{
+			FChronoCitizen& Citizen = Citizens[CitizenId];
+
+			float Target = Rules.HappinessBase + TaxEffect + HomeEffect;
+			if (Citizen.WorkBuildingId != INDEX_NONE)
+			{
+				Target += Rules.EmployedBonus;
+			}
+			else if (IsWorkingAge(Citizen.AgeYears, Rules))
+			{
+				Target -= Rules.UnemployedPenalty;
+			}
+
+			// Moods change gradually, not overnight.
+			Citizen.Happiness = FMath::Clamp(Citizen.Happiness + (FMath::Clamp(Target, 0.0f, 100.0f) - Citizen.Happiness) * Adjust, 0.0f, 100.0f);
+		}
 	}
 }
 
@@ -606,7 +641,19 @@ void FChronoPopulation::ComputeStatsAndDemand(const FChronoCityConditions& Condi
 
 	for (const FChronoHousehold& Household : Households)
 	{
-		Stats.Households += Household.bInUse ? 1 : 0;
+		if (!Household.bInUse)
+		{
+			continue;
+		}
+
+		++Stats.Households;
+		if (const FOccupancy* Home = Occupancy.Find(Household.HomeBuildingId))
+		{
+			for (int32 Service = 1; Service < static_cast<int32>(EChronoServiceType::Count); ++Service)
+			{
+				Stats.HouseholdsServed[Service] += (Home->ServiceMask >> Service) & 1u;
+			}
+		}
 	}
 
 	for (const TPair<int32, FOccupancy>& Pair : Occupancy)

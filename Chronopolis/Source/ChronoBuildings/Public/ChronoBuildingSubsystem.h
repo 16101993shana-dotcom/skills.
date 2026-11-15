@@ -40,6 +40,29 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
 	float GetLandValueAt(FVector2D WorldXY) const;
 
+	/**
+	 * Places a service building chosen by the player on the lot under a
+	 * point. Paying for it is the caller's business (see UChronoEconomySubsystem).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Buildings")
+	EChronoPlaceResult PlaceServiceBuilding(FName DefId, FVector2D WorldXY, int32& OutBuildingId);
+
+	/** Removes the building whose walls contain a point. Returns false if there is none. */
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Buildings")
+	bool DemolishBuildingAt(FVector2D WorldXY);
+
+	/** Identifiers of the buildings the player can place, in the order of the project settings. */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
+	TArray<FName> GetServiceBuildingIds() const;
+
+	/** Price of a building the player can place (0 for an unknown one). */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
+	float GetConstructionCost(FName DefId) const;
+
+	/** Player-facing explanation of a placement result. */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
+	static FText GetPlaceResultText(EChronoPlaceResult Result);
+
 	/** Runs one growth step now, whatever the simulation speed. Returns the number of buildings created. */
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Buildings")
 	int32 GrowNow(int32 MaxNewBuildings);
@@ -75,6 +98,7 @@ private:
 
 	int32 GrowthIntervalTicks = 5;
 	int32 GrowthPerStep = 2;
+	int32 UpgradesPerStep = 1;
 	int32 GrowthSeed = 0;
 
 	FDelegateHandle SimTickHandle;

@@ -2,6 +2,7 @@
 
 #include "ChronoBuildingSubsystem.h"
 #include "ChronoCore.h"
+#include "ChronoEconomySubsystem.h"
 #include "ChronoEnvironmentActor.h"
 #include "ChronoRoadGeometry.h"
 #include "ChronoRoadSubsystem.h"
@@ -19,6 +20,8 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
+
+#define LOCTEXT_NAMESPACE "ChronoGame"
 
 AChronoPlayerController::AChronoPlayerController()
 {
@@ -210,6 +213,9 @@ void AChronoPlayerController::ChronoTool(int32 ToolIndex)
 	case 2:
 		SetToolMode(EChronoToolMode::Zone);
 		break;
+	case 3:
+		SetToolMode(EChronoToolMode::Service);
+		break;
 	default:
 		SetToolMode(EChronoToolMode::Terraform);
 		break;
@@ -251,10 +257,10 @@ void AChronoPlayerController::SetToolMode(EChronoToolMode NewMode)
 	ResetRoadDrawing();
 	bHasFlattenTarget = false;
 
-	// The zoning overlay is only shown while the zoning tool is active.
+	// The plots are shown while a tool that works on them is active.
 	if (UChronoZoningSubsystem* Zoning = GetWorld() ? GetWorld()->GetSubsystem<UChronoZoningSubsystem>() : nullptr)
 	{
-		Zoning->SetOverlayVisible(ToolMode == EChronoToolMode::Zone);
+		Zoning->SetOverlayVisible(ToolMode == EChronoToolMode::Zone || ToolMode == EChronoToolMode::Service);
 	}
 }
 
@@ -282,6 +288,12 @@ void AChronoPlayerController::ShowToolMessage(const FText& Message, bool bIsErro
 
 void AChronoPlayerController::OnRoadPlace(const FInputActionValue& Value)
 {
+	// The same click places a service building while the service tool is active.
+	if (ToolMode == EChronoToolMode::Service)
+	{
+		PlaceServiceUnderCursor();
+		return;
+	}
 	if (ToolMode != EChronoToolMode::Road)
 	{
 		return;
@@ -332,10 +344,25 @@ void AChronoPlayerController::OnRoadPlace(const FInputActionValue& Value)
 		Request.Profile.CarriagewayWidthCm = 0.0f;
 	}
 
+	// Roads are paid for: nothing is built that the treasury cannot afford.
+	UChronoEconomySubsystem* Economy = GetWorld()->GetSubsystem<UChronoEconomySubsystem>();
+	const double Cost = Economy ? Economy->EstimateRoadCost(Request) : 0.0;
+	if (Economy && !Economy->CanAfford(Cost))
+	{
+		ShowToolMessage(FText::Format(LOCTEXT("RoadNoMoney", "This road costs {0}: not enough money in the treasury."), FText::AsNumber(FMath::RoundToInt32(Cost))), true);
+		bHasRoadControl = false;
+		return;
+	}
+
 	int32 SegmentId = INDEX_NONE;
 	const EChronoRoadBuildResult Result = Roads->BuildRoad(Request, SegmentId);
 	if (Result == EChronoRoadBuildResult::Success)
 	{
+		if (Economy)
+		{
+			Economy->Spend(Cost);
+		}
+
 		// Chain: the next road starts where this one ends.
 		RoadStart = Point;
 		bHasRoadControl = false;
@@ -359,6 +386,17 @@ void AChronoPlayerController::OnRoadCancel(const FInputActionValue& Value)
 
 void AChronoPlayerController::OnRoadDemolish(const FInputActionValue& Value)
 {
+	// The same input demolishes a building while the service tool is active.
+	if (ToolMode == EChronoToolMode::Service)
+	{
+		FVector BuildingGround;
+		UChronoBuildingSubsystem* Buildings = GetWorld()->GetSubsystem<UChronoBuildingSubsystem>();
+		if (Buildings && GetGroundUnderCursor(BuildingGround))
+		{
+			Buildings->DemolishBuildingAt(FVector2D(BuildingGround.X, BuildingGround.Y));
+		}
+		return;
+	}
 	if (ToolMode != EChronoToolMode::Road)
 	{
 		return;
@@ -426,3 +464,54 @@ void AChronoPlayerController::ChronoGrow(int32 Count)
 		ShowToolMessage(FText::AsNumber(NumCreated), false);
 	}
 }
+
+void AChronoPlayerController::ChronoService(int32 Index)
+{
+	const UChronoBuildingSubsystem* Buildings = GetWorld()->GetSubsystem<UChronoBuildingSubsystem>();
+	const TArray<FName> Ids = Buildings ? Buildings->GetServiceBuildingIds() : TArray<FName>();
+	if (Ids.IsValidIndex(Index))
+	{
+		SetServiceBuilding(Ids[Index]);
+		ShowToolMessage(FText::FromName(Ids[Index]), false);
+	}
+}
+
+void AChronoPlayerController::SetServiceBuilding(FName DefId)
+{
+	ServiceDefId = DefId;
+}
+
+void AChronoPlayerController::PlaceServiceUnderCursor()
+{
+	FVector Ground;
+	UChronoBuildingSubsystem* Buildings = GetWorld()->GetSubsystem<UChronoBuildingSubsystem>();
+	if (!Buildings || !GetGroundUnderCursor(Ground))
+	{
+		return;
+	}
+
+	// Paid for like roads: checked before, charged after a successful placement.
+	UChronoEconomySubsystem* Economy = GetWorld()->GetSubsystem<UChronoEconomySubsystem>();
+	const double Cost = Buildings->GetConstructionCost(ServiceDefId);
+	if (Economy && !Economy->CanAfford(Cost))
+	{
+		ShowToolMessage(UChronoBuildingSubsystem::GetPlaceResultText(EChronoPlaceResult::NotEnoughMoney), true);
+		return;
+	}
+
+	int32 BuildingId = INDEX_NONE;
+	const EChronoPlaceResult Result = Buildings->PlaceServiceBuilding(ServiceDefId, FVector2D(Ground.X, Ground.Y), BuildingId);
+	if (Result == EChronoPlaceResult::Success)
+	{
+		if (Economy)
+		{
+			Economy->Spend(Cost);
+		}
+	}
+	else
+	{
+		ShowToolMessage(UChronoBuildingSubsystem::GetPlaceResultText(Result), true);
+	}
+}
+
+#undef LOCTEXT_NAMESPACE

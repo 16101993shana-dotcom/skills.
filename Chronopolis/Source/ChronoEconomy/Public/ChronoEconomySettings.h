@@ -43,6 +43,22 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Expenses", meta = (ClampMin = "0.0"))
 	float RoadUpkeepPerM2PerDay = 0.0008f;
 
+	/** Price of one square meter of new road. */
+	UPROPERTY(Config, EditAnywhere, Category = "Expenses", meta = (ClampMin = "0.0"))
+	float RoadCostPerM2 = 0.5f;
+
+	/** Most the city may owe at one time, interest included. */
+	UPROPERTY(Config, EditAnywhere, Category = "Loans", meta = (ClampMin = "0.0"))
+	double MaxDebt = 50000.0;
+
+	/** Total interest of a loan, as a fraction of the amount borrowed (0.1 = 10 %). */
+	UPROPERTY(Config, EditAnywhere, Category = "Loans", meta = (ClampMin = "0.0"))
+	float LoanInterestRate = 0.1f;
+
+	/** Days over which a loan is repaid. */
+	UPROPERTY(Config, EditAnywhere, Category = "Loans", meta = (ClampMin = "1"))
+	int32 LoanTermDays = 360;
+
 	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
 	float SciencePerThousandCitizensPerDay = 0.1f;
 

@@ -9,6 +9,8 @@
 #include "ChronoZoningSubsystem.h"
 #include "Engine/World.h"
 
+#define LOCTEXT_NAMESPACE "ChronoBuildings"
+
 void UChronoBuildingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	// Buildings stand on zoned cells, along roads, on the terrain, and grow
@@ -24,6 +26,7 @@ void UChronoBuildingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	Definitions = Settings->Definitions;
 	GrowthIntervalTicks = FMath::Max(Settings->GrowthIntervalTicks, 1);
 	GrowthPerStep = FMath::Max(Settings->GrowthPerStep, 0);
+	UpgradesPerStep = FMath::Max(Settings->UpgradesPerStep, 0);
 	GrowthSeed = Settings->GrowthSeed;
 
 	if (Definitions.Num() == 0)
@@ -139,11 +142,98 @@ int32 UChronoBuildingSubsystem::GrowStep(int64 TickIndex, int32 MaxNewBuildings)
 	FRandomStream Random(StepSeed);
 
 	const int32 NumCreated = Buildings.Grow(Zoning->GetGrid(), Terrain->GetHeightfield(), Roads->GetGraph(), Definitions, Rules, Random, MaxNewBuildings, bHasZoneDemand ? &ZoneDemand : nullptr);
-	if (NumCreated > 0)
+	// Buildings already standing gain a level where the land value allows it.
+	const int32 NumUpgraded = Buildings.UpgradeBuildings(Rules, Random, UpgradesPerStep);
+
+	if (NumCreated > 0 || NumUpgraded > 0)
 	{
 		BroadcastChanges();
 	}
 	return NumCreated;
+}
+
+EChronoPlaceResult UChronoBuildingSubsystem::PlaceServiceBuilding(FName DefId, FVector2D WorldXY, int32& OutBuildingId)
+{
+	OutBuildingId = INDEX_NONE;
+
+	const FChronoBuildingDefData* Definition = FindDefinition(DefId);
+	if (!Definition || Definition->Service == EChronoServiceType::None)
+	{
+		return EChronoPlaceResult::UnknownBuilding;
+	}
+
+	const UWorld* World = GetWorld();
+	const UChronoTerrainSubsystem* Terrain = World ? World->GetSubsystem<UChronoTerrainSubsystem>() : nullptr;
+	const UChronoRoadSubsystem* Roads = World ? World->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
+	const UChronoZoningSubsystem* Zoning = World ? World->GetSubsystem<UChronoZoningSubsystem>() : nullptr;
+	if (!Terrain || !Roads || !Zoning)
+	{
+		return EChronoPlaceResult::NoLot;
+	}
+
+	const int32 CellId = Zoning->GetGrid().FindCellAt(WorldXY);
+	if (CellId == INDEX_NONE)
+	{
+		return EChronoPlaceResult::NoLot;
+	}
+
+	OutBuildingId = Buildings.PlaceBuilding(Zoning->GetGrid(), Terrain->GetHeightfield(), Roads->GetGraph(), CellId, *Definition, Rules);
+	if (OutBuildingId == INDEX_NONE)
+	{
+		return EChronoPlaceResult::DoesNotFit;
+	}
+
+	BroadcastChanges();
+	return EChronoPlaceResult::Success;
+}
+
+bool UChronoBuildingSubsystem::DemolishBuildingAt(FVector2D WorldXY)
+{
+	if (!Buildings.DemolishBuilding(Buildings.FindBuildingAt(WorldXY)))
+	{
+		return false;
+	}
+
+	BroadcastChanges();
+	return true;
+}
+
+TArray<FName> UChronoBuildingSubsystem::GetServiceBuildingIds() const
+{
+	TArray<FName> Ids;
+	for (const FChronoBuildingDefData& Definition : Definitions)
+	{
+		if (Definition.Service != EChronoServiceType::None)
+		{
+			Ids.Add(Definition.DefId);
+		}
+	}
+	return Ids;
+}
+
+float UChronoBuildingSubsystem::GetConstructionCost(FName DefId) const
+{
+	const FChronoBuildingDefData* Definition = FindDefinition(DefId);
+	return Definition ? Definition->ConstructionCost : 0.0f;
+}
+
+FText UChronoBuildingSubsystem::GetPlaceResultText(EChronoPlaceResult Result)
+{
+	switch (Result)
+	{
+	case EChronoPlaceResult::Success:
+		return LOCTEXT("PlaceBuilt", "Building placed.");
+	case EChronoPlaceResult::UnknownBuilding:
+		return LOCTEXT("PlaceUnknown", "No building is selected.");
+	case EChronoPlaceResult::NoLot:
+		return LOCTEXT("PlaceNoLot", "There is no free plot here. Buildings stand on the plots along a road.");
+	case EChronoPlaceResult::DoesNotFit:
+		return LOCTEXT("PlaceDoesNotFit", "The building does not fit here: the plot is too small, already taken, or on a bend.");
+	case EChronoPlaceResult::NotEnoughMoney:
+		return LOCTEXT("PlaceNoMoney", "Not enough money in the treasury.");
+	default:
+		return FText::GetEmpty();
+	}
 }
 
 void UChronoBuildingSubsystem::SetZoneDemand(const FChronoZoneDemand& InDemand)
@@ -228,3 +318,5 @@ void UChronoBuildingSubsystem::BroadcastChanges()
 		OnBuildingsChanged.Broadcast(Dirty);
 	}
 }
+
+#undef LOCTEXT_NAMESPACE

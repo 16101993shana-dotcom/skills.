@@ -1,6 +1,7 @@
 // Runs the budget once per simulated day and lets the player set taxes.
 // Console: "Chrono.City.Stats" prints population and budget,
-// "Chrono.Tax <zone 1-4> <percent>" sets a tax rate.
+// "Chrono.Tax <zone 1-4> <percent>" sets a tax rate,
+// "Chrono.Loan <amount>" borrows money.
 
 #pragma once
 
@@ -10,6 +11,7 @@
 #include "ChronoEconomySubsystem.generated.h"
 
 struct FChronoPopulationStats;
+struct FChronoRoadBuildRequest;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FChronoOnBudgetChanged);
 
@@ -35,6 +37,26 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Chronopolis|Economy")
 	double GetTreasury() const { return Budget.GetTreasury(); }
+
+	/** True if the treasury holds at least Cost. */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Economy")
+	bool CanAfford(double Cost) const { return Budget.CanAfford(Cost); }
+
+	/** Pays for a construction. Returns false, and pays nothing, if the treasury is too low. */
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Economy")
+	bool Spend(double Cost);
+
+	/** Price of the road a request would build. */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Economy")
+	double EstimateRoadCost(const FChronoRoadBuildRequest& Request) const;
+
+	/** Borrows money, repaid with interest day by day. Returns false beyond the debt limit. */
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Economy")
+	bool TakeLoan(double Amount);
+
+	/** What remains to be repaid, interest included. */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Economy")
+	double GetDebt() const { return Budget.GetDebt(); }
 
 	/** Income and expenses of the last full month. */
 	UFUNCTION(BlueprintPure, Category = "Chronopolis|Economy")

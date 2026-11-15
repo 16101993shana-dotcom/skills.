@@ -1,7 +1,9 @@
 #include "ChronoBudget.h"
 
 #include "ChronoEconomySettings.h"
+#include "ChronoRoadGeometry.h"
 #include "ChronoRoadGraph.h"
+#include "ChronoRoadTypes.h"
 
 FChronoEconomyRules FChronoEconomyRules::FromSettings()
 {
@@ -15,7 +17,11 @@ FChronoEconomyRules FChronoEconomyRules::FromSettings()
 	Rules.OutputPerIndustrialWorker = Settings->OutputPerIndustrialWorker;
 	Rules.OutputPerAgriculturalWorker = Settings->OutputPerAgriculturalWorker;
 	Rules.RoadUpkeepPerM2PerDay = Settings->RoadUpkeepPerM2PerDay;
+	Rules.RoadCostPerM2 = Settings->RoadCostPerM2;
 	Rules.DaysPerMonth = Settings->DaysPerMonth;
+	Rules.MaxDebt = Settings->MaxDebt;
+	Rules.LoanInterestRate = Settings->LoanInterestRate;
+	Rules.LoanTermDays = Settings->LoanTermDays;
 	Rules.SciencePerThousandCitizensPerDay = Settings->SciencePerThousandCitizensPerDay;
 	Rules.SciencePerCivicWorkerPerDay = Settings->SciencePerCivicWorkerPerDay;
 	Rules.CulturePerThousandCitizensPerDay = Settings->CulturePerThousandCitizensPerDay;
@@ -30,6 +36,9 @@ void FChronoLedger::Add(const FChronoLedger& Other)
 	IndustrialTax += Other.IndustrialTax;
 	AgriculturalTax += Other.AgriculturalTax;
 	RoadUpkeep += Other.RoadUpkeep;
+	ServiceUpkeep += Other.ServiceUpkeep;
+	Construction += Other.Construction;
+	LoanRepayment += Other.LoanRepayment;
 }
 
 void FChronoLedger::Serialize(FArchive& Ar)
@@ -39,6 +48,9 @@ void FChronoLedger::Serialize(FArchive& Ar)
 	Ar << IndustrialTax;
 	Ar << AgriculturalTax;
 	Ar << RoadUpkeep;
+	Ar << ServiceUpkeep;
+	Ar << Construction;
+	Ar << LoanRepayment;
 }
 
 void FChronoBudget::Reset(const FChronoEconomyRules& Rules, float NeutralTaxRate)
@@ -63,7 +75,50 @@ void FChronoBudget::SetTaxRate(EChronoZoneType Zone, float Rate, const FChronoEc
 	Conditions.TaxRate[static_cast<int32>(Zone)] = FMath::Clamp(Rate, 0.0f, FMath::Max(Rules.MaxTaxRate, 0.0f));
 }
 
-void FChronoBudget::StepDay(const FChronoPopulationStats& Stats, double RoadAreaM2, const FChronoEconomyRules& Rules)
+bool FChronoBudget::Spend(double Cost)
+{
+	if (Cost <= 0.0)
+	{
+		return true;
+	}
+	if (!CanAfford(Cost))
+	{
+		return false;
+	}
+
+	Treasury -= Cost;
+	ConstructionSinceLastDay += Cost;
+	return true;
+}
+
+bool FChronoBudget::TakeLoan(double Amount, const FChronoEconomyRules& Rules)
+{
+	const double Owed = Amount * (1.0 + FMath::Max(Rules.LoanInterestRate, 0.0f));
+	if (Amount <= 0.0 || GetDebt() + Owed > Rules.MaxDebt)
+	{
+		return false;
+	}
+
+	FLoan Loan;
+	Loan.Remaining = Owed;
+	Loan.DailyPayment = Owed / FMath::Max(Rules.LoanTermDays, 1);
+	Loans.Add(Loan);
+
+	Treasury += Amount;
+	return true;
+}
+
+double FChronoBudget::GetDebt() const
+{
+	double Debt = 0.0;
+	for (const FLoan& Loan : Loans)
+	{
+		Debt += Loan.Remaining;
+	}
+	return Debt;
+}
+
+void FChronoBudget::StepDay(const FChronoPopulationStats& Stats, double RoadAreaM2, double ServiceUpkeepPerDay, const FChronoEconomyRules& Rules)
 {
 	auto Workers = [&Stats](EChronoZoneType Zone)
 	{
@@ -76,8 +131,26 @@ void FChronoBudget::StepDay(const FChronoPopulationStats& Stats, double RoadArea
 	Today.IndustrialTax = Workers(EChronoZoneType::Industrial) * Rules.OutputPerIndustrialWorker * GetTaxRate(EChronoZoneType::Industrial);
 	Today.AgriculturalTax = Workers(EChronoZoneType::Agricultural) * Rules.OutputPerAgriculturalWorker * GetTaxRate(EChronoZoneType::Agricultural);
 	Today.RoadUpkeep = FMath::Max(RoadAreaM2, 0.0) * Rules.RoadUpkeepPerM2PerDay;
+	Today.ServiceUpkeep = FMath::Max(ServiceUpkeepPerDay, 0.0);
 
-	Treasury += Today.GetNet();
+	// Each loan is repaid by its daily payment until nothing remains.
+	for (int32 Index = Loans.Num() - 1; Index >= 0; --Index)
+	{
+		FLoan& Loan = Loans[Index];
+		const double Payment = FMath::Min(Loan.DailyPayment, Loan.Remaining);
+		Loan.Remaining -= Payment;
+		Today.LoanRepayment += Payment;
+		if (Loan.Remaining <= 1.0e-6)
+		{
+			Loans.RemoveAt(Index);
+		}
+	}
+
+	// Constructions were paid when they were built: they appear in the
+	// ledger of the day, but are not taken from the treasury a second time.
+	Today.Construction = ConstructionSinceLastDay;
+	ConstructionSinceLastDay = 0.0;
+	Treasury += Today.GetNet() + Today.Construction;
 
 	CurrentMonth.Add(Today);
 	if (++DayOfMonth >= FMath::Max(Rules.DaysPerMonth, 1))
@@ -101,8 +174,11 @@ void FChronoBudget::StepDay(const FChronoPopulationStats& Stats, double RoadArea
 
 bool FChronoBudget::Serialize(FArchive& Ar)
 {
-	// Bump when the binary layout changes.
-	const int32 CurrentVersion = 1;
+	// Bump when the binary layout changes. Version 2 adds loans, service
+	// upkeep and construction costs.
+	const int32 CurrentVersion = 2;
+	// Sanity bound on the count read from a file.
+	const int32 MaxLoans = 1024;
 
 	int32 Version = CurrentVersion;
 	Ar << Version;
@@ -111,6 +187,25 @@ bool FChronoBudget::Serialize(FArchive& Ar)
 		Ar.SetError();
 		return false;
 	}
+
+	int32 NumLoans = Loans.Num();
+	Ar << NumLoans;
+	if (Ar.IsLoading())
+	{
+		if (Ar.IsError() || NumLoans < 0 || NumLoans > MaxLoans)
+		{
+			*this = FChronoBudget();
+			Ar.SetError();
+			return false;
+		}
+		Loans.SetNum(NumLoans);
+	}
+	for (FLoan& Loan : Loans)
+	{
+		Ar << Loan.Remaining;
+		Ar << Loan.DailyPayment;
+	}
+	Ar << ConstructionSinceLastDay;
 
 	for (float& Rate : Conditions.TaxRate)
 	{
@@ -128,7 +223,11 @@ bool FChronoBudget::Serialize(FArchive& Ar)
 
 	if (Ar.IsLoading())
 	{
-		bool bValid = !Ar.IsError() && DayOfMonth >= 0 && Science >= 0.0 && Culture >= 0.0 && FMath::IsFinite(Treasury);
+		bool bValid = !Ar.IsError() && DayOfMonth >= 0 && Science >= 0.0 && Culture >= 0.0 && FMath::IsFinite(Treasury) && ConstructionSinceLastDay >= 0.0;
+		for (const FLoan& Loan : Loans)
+		{
+			bValid = bValid && Loan.Remaining >= 0.0 && Loan.DailyPayment > 0.0;
+		}
 		for (const float Rate : Conditions.TaxRate)
 		{
 			bValid = bValid && Rate >= 0.0f && Rate <= 1.0f;
@@ -152,4 +251,14 @@ double ChronoEconomy::ComputeRoadAreaM2(const FChronoRoadGraph& Graph)
 		AreaCm2 += Pair.Value.Length * 2.0 * Pair.Value.Profile.GetHalfWidthCm();
 	}
 	return AreaCm2 / 10000.0;
+}
+
+double ChronoEconomy::EstimateRoadCost(const FChronoRoadBuildRequest& Request, const FChronoEconomyRules& Rules)
+{
+	const FChronoBezier2D Curve = Request.bCurved
+		? FChronoBezier2D::MakeQuadratic(Request.Start, Request.Control, Request.End)
+		: FChronoBezier2D::MakeLine(Request.Start, Request.End);
+
+	const double AreaM2 = Curve.ComputeLength() * 2.0 * Request.Profile.GetHalfWidthCm() / 10000.0;
+	return AreaM2 * Rules.RoadCostPerM2;
 }

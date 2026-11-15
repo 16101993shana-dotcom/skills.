@@ -32,6 +32,10 @@ FChronoBuildingRules FChronoBuildingRules::FromSettings()
 	Rules.IndustryLandValuePenalty = Settings->IndustryLandValuePenalty;
 	Rules.NeighborRadiusCm = Settings->NeighborRadiusCm;
 	Rules.MaxLandValue = Settings->MaxLandValue;
+	Rules.ServiceLandValue = Settings->ServiceLandValue;
+	Rules.MaxLevel = Settings->MaxLevel;
+	Rules.Level2LandValue = Settings->Level2LandValue;
+	Rules.Level3LandValue = Settings->Level3LandValue;
 	return Rules;
 }
 
@@ -108,6 +112,10 @@ void FChronoBuildingSet::AddBuilding(const FChronoBuilding& Building)
 {
 	Buildings.Add(Building.Id, Building);
 	Buckets.FindOrAdd(GetBucket(Building.Footprint.Center)).Add(Building.Id);
+	if (Building.Service != EChronoServiceType::None)
+	{
+		ServiceBuildingIds.Add(Building.Id);
+	}
 
 	for (int32 Slot = Building.FirstSlot; Slot < Building.FirstSlot + Building.WidthCells; ++Slot)
 	{
@@ -127,6 +135,8 @@ void FChronoBuildingSet::RemoveBuilding(int32 BuildingId)
 	{
 		return;
 	}
+
+	ServiceBuildingIds.Remove(BuildingId);
 
 	const FIntPoint BucketKey = GetBucket(Building.Footprint.Center);
 	if (TArray<int32>* Bucket = Buckets.Find(BucketKey))
@@ -159,6 +169,7 @@ void FChronoBuildingSet::Reset()
 	Buildings.Reset();
 	OccupiedCells.Reset();
 	Buckets.Reset();
+	ServiceBuildingIds.Reset();
 }
 
 TArray<int32> FChronoBuildingSet::TakeDirtySegments()
@@ -199,6 +210,9 @@ float FChronoBuildingSet::ComputeLandValue(const FVector2D& Point, bool bFrontsO
 
 	Value += FMath::Min(NumNeighbors * Rules.NeighborLandValue, Rules.NeighborLandValueCap);
 	Value -= NumIndustry * Rules.IndustryLandValuePenalty;
+
+	// Public services nearby make a place worth more.
+	Value += CountServices(GetServiceMaskAt(Point)) * Rules.ServiceLandValue;
 	return FMath::Clamp(Value, 0.0f, Rules.MaxLandValue);
 }
 
@@ -252,7 +266,8 @@ int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightf
 		float TotalWeight = 0.0f;
 		for (int32 Index = 0; Index < Definitions.Num(); ++Index)
 		{
-			if (Definitions[Index].Zone == Anchor->Zone && Definitions[Index].Weight > 0.0f)
+			// Services are placed by the player, never grown.
+			if (Definitions[Index].Zone == Anchor->Zone && Definitions[Index].Weight > 0.0f && Definitions[Index].Service == EChronoServiceType::None)
 			{
 				Fitting.Add(Index);
 				TotalWeight += Definitions[Index].Weight;
@@ -274,7 +289,7 @@ int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightf
 			}
 
 			const FChronoBuildingDefData& Definition = Definitions[Fitting[Chosen]];
-			if (TryPlace(Grid, Heightfield, Graph, *Anchor, Definition, Rules))
+			if (TryPlace(Grid, Heightfield, Graph, *Anchor, Definition, Rules, false) != INDEX_NONE)
 			{
 				++NumCreated;
 				break;
@@ -288,7 +303,7 @@ int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightf
 	return NumCreated;
 }
 
-bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules)
+int32 FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules, bool bPlayerPlaced)
 {
 	using namespace ChronoBuildingSetPrivate;
 
@@ -307,13 +322,15 @@ bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeig
 		for (int32 Row = 0; Row < Depth; ++Row)
 		{
 			const FChronoZoneCell* Cell = Grid.FindCellByKey(Anchor.SegmentId, Anchor.Side, Slot, Row);
-			if (!Cell || Cell->Zone != Anchor.Zone || IsCellOccupied(Anchor.SegmentId, Anchor.Side, Slot, Row))
+			// A building that grows needs its whole lot in the zone of the
+			// anchor. A building placed by the player takes any free cells.
+			if (!Cell || IsCellOccupied(Anchor.SegmentId, Anchor.Side, Slot, Row) || (!bPlayerPlaced && Cell->Zone != Anchor.Zone))
 			{
-				return false;
+				return INDEX_NONE;
 			}
 			if (FMath::Abs(FMath::FindDeltaAngleRadians(Anchor.YawRadians, Cell->YawRadians)) > MaxYawDelta)
 			{
-				return false;
+				return INDEX_NONE;
 			}
 
 			CenterSum += Cell->Center;
@@ -326,9 +343,9 @@ bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeig
 
 	// 2. Land value decides whether the building may appear, and how tall.
 	const float LandValue = ComputeLandValue(LotCenter, true, Rules);
-	if (LandValue < Definition.MinLandValue)
+	if (!bPlayerPlaced && LandValue < Definition.MinLandValue)
 	{
-		return false;
+		return INDEX_NONE;
 	}
 
 	// 3. The walls: the lot minus its margins. The front of the lot is the
@@ -337,7 +354,7 @@ bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeig
 	const double HalfY = LotHalf.Y - 0.5 * (Definition.FrontSetbackCm + Definition.RearMarginCm);
 	if (2.0 * HalfX < MinWallLengthCm || 2.0 * HalfY < MinWallLengthCm)
 	{
-		return false;
+		return INDEX_NONE;
 	}
 
 	const FVector2D AxisY(-FMath::Sin(Anchor.YawRadians), FMath::Cos(Anchor.YawRadians));
@@ -357,14 +374,14 @@ bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeig
 		}
 		if (!bInsideLot)
 		{
-			return false;
+			return INDEX_NONE;
 		}
 	}
 
 	if (!ChronoZoning::IsBoxClearOfRoads(Graph, Footprint, Rules.RoadClearanceCm, Rules.RoadSampleSpacingCm)
 		|| OverlapsExistingBuilding(Footprint, Rules.OverlapToleranceCm))
 	{
-		return false;
+		return INDEX_NONE;
 	}
 
 	// 5. Heights: floor above the highest ground under the walls, foundation
@@ -377,12 +394,17 @@ bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeig
 	const int32 MinFloors = FMath::Max(Definition.MinFloors, 1);
 	const int32 MaxFloors = FMath::Max(Definition.MaxFloors, MinFloors);
 	const float ValueRatio = FMath::Clamp(LandValue / FMath::Max(Rules.MaxLandValue, 1.0f), 0.0f, 1.0f);
-	const int32 Floors = MinFloors + FMath::RoundToInt32((MaxFloors - MinFloors) * ValueRatio);
+	// A service always has the size its definition gives it.
+	const int32 Floors = bPlayerPlaced ? MinFloors : MinFloors + FMath::RoundToInt32((MaxFloors - MinFloors) * ValueRatio);
 
 	FChronoBuilding Building;
 	Building.Id = NextBuildingId++;
 	Building.DefId = Definition.DefId;
-	Building.Zone = Anchor.Zone;
+	Building.Zone = bPlayerPlaced ? Definition.Zone : Anchor.Zone;
+	Building.bPlayerPlaced = bPlayerPlaced;
+	Building.Service = Definition.Service;
+	Building.ServiceRadiusCm = (Definition.Service != EChronoServiceType::None) ? Definition.ServiceRadiusCm : 0.0f;
+	Building.UpkeepPerDay = bPlayerPlaced ? Definition.UpkeepPerDay : 0.0f;
 	Building.SegmentId = Anchor.SegmentId;
 	Building.Side = Anchor.Side;
 	Building.FirstSlot = Anchor.Slot;
@@ -398,7 +420,129 @@ bool FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeig
 	Building.LandValue = LandValue;
 
 	AddBuilding(Building);
+	return Building.Id;
+}
+
+int32 FChronoBuildingSet::PlaceBuilding(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, int32 AnchorCellId, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules)
+{
+	const FChronoZoneCell* Clicked = Grid.FindCell(AnchorCellId);
+	if (!Clicked)
+	{
+		return INDEX_NONE;
+	}
+
+	// Whatever row was clicked, the lot starts at the road.
+	const FChronoZoneCell* Anchor = Grid.FindCellByKey(Clicked->SegmentId, Clicked->Side, Clicked->Slot, 0);
+	return Anchor ? TryPlace(Grid, Heightfield, Graph, *Anchor, Definition, Rules, true) : INDEX_NONE;
+}
+
+bool FChronoBuildingSet::DemolishBuilding(int32 BuildingId)
+{
+	if (!Buildings.Contains(BuildingId))
+	{
+		return false;
+	}
+	RemoveBuilding(BuildingId);
 	return true;
+}
+
+int32 FChronoBuildingSet::FindBuildingAt(const FVector2D& Point) const
+{
+	TArray<int32> Candidates;
+	QueryBuildings(FBox2D(Point, Point), Candidates);
+
+	// The lowest id wins so the answer does not depend on bucket order.
+	int32 BestId = INDEX_NONE;
+	for (const int32 BuildingId : Candidates)
+	{
+		if (Buildings.FindChecked(BuildingId).Footprint.Contains(Point) && (BestId == INDEX_NONE || BuildingId < BestId))
+		{
+			BestId = BuildingId;
+		}
+	}
+	return BestId;
+}
+
+uint32 FChronoBuildingSet::GetServiceMaskAt(const FVector2D& Point) const
+{
+	uint32 Mask = 0;
+	for (const int32 BuildingId : ServiceBuildingIds)
+	{
+		const FChronoBuilding& Building = Buildings.FindChecked(BuildingId);
+		const double Radius = Building.ServiceRadiusCm;
+		if (FVector2D::DistSquared(Building.Footprint.Center, Point) <= Radius * Radius)
+		{
+			Mask |= 1u << static_cast<uint32>(Building.Service);
+		}
+	}
+	return Mask;
+}
+
+int32 FChronoBuildingSet::CountServices(uint32 ServiceMask)
+{
+	int32 Count = 0;
+	for (uint32 Bit = 1; Bit < static_cast<uint32>(EChronoServiceType::Count); ++Bit)
+	{
+		Count += (ServiceMask >> Bit) & 1u;
+	}
+	return Count;
+}
+
+double FChronoBuildingSet::GetTotalUpkeepPerDay() const
+{
+	double Total = 0.0;
+	for (const TPair<int32, FChronoBuilding>& Pair : Buildings)
+	{
+		Total += Pair.Value.UpkeepPerDay;
+	}
+	return Total;
+}
+
+int32 FChronoBuildingSet::UpgradeBuildings(const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxUpgrades)
+{
+	if (MaxUpgrades <= 0)
+	{
+		return 0;
+	}
+
+	// Grown buildings below the highest level, in id order.
+	TArray<int32> Candidates;
+	for (const TPair<int32, FChronoBuilding>& Pair : Buildings)
+	{
+		if (!Pair.Value.bPlayerPlaced && Pair.Value.Level < Rules.MaxLevel)
+		{
+			Candidates.Add(Pair.Key);
+		}
+	}
+	Candidates.Sort();
+
+	int32 NumUpgraded = 0;
+	const int32 MaxAttempts = MaxUpgrades * 8;
+	for (int32 Attempt = 0; Attempt < MaxAttempts && NumUpgraded < MaxUpgrades && Candidates.Num() > 0; ++Attempt)
+	{
+		const int32 Index = Random.RandRange(0, Candidates.Num() - 1);
+		FChronoBuilding& Building = Buildings.FindChecked(Candidates[Index]);
+		Candidates.RemoveAtSwap(Index);
+
+		const float LandValue = ComputeLandValue(Building.Footprint.Center, true, Rules);
+		const float Needed = (Building.Level == 1) ? Rules.Level2LandValue : Rules.Level3LandValue;
+		if (LandValue < Needed)
+		{
+			continue;
+		}
+
+		// One more storey of the same height as the others: more homes or
+		// jobs on the same lot, with the same footprint, so nothing can clip.
+		const float StoreyHeight = Building.BodyHeightCm / FMath::Max(Building.Floors, 1);
+		++Building.Level;
+		++Building.Floors;
+		Building.BodyHeightCm += StoreyHeight;
+		Building.LandValue = LandValue;
+		DirtySegments.Add(Building.SegmentId);
+		++NumUpgraded;
+	}
+
+	return NumUpgraded;
 }
 
 int32 FChronoBuildingSet::RemoveInvalid(const FChronoZoneGrid& Grid, TConstArrayView<int32> SegmentIds)
@@ -421,7 +565,7 @@ int32 FChronoBuildingSet::RemoveInvalid(const FChronoZoneGrid& Grid, TConstArray
 					// The cell must still be where the building stands: after
 					// a road is split, the same key can name a cell elsewhere.
 					bLotIntact = Cell
-						&& Cell->Zone == Building.Zone
+						&& (Building.bPlayerPlaced || Cell->Zone == Building.Zone)
 						&& Building.Footprint.DistanceToPoint(Cell->Center) < Grid.GetCellSizeCm();
 				}
 			}
@@ -472,6 +616,7 @@ void FChronoBuildingSet::RebuildIndices()
 {
 	OccupiedCells.Reset();
 	Buckets.Reset();
+	ServiceBuildingIds.Reset();
 
 	TArray<int32> BuildingIds;
 	Buildings.GetKeys(BuildingIds);
@@ -480,6 +625,10 @@ void FChronoBuildingSet::RebuildIndices()
 	{
 		const FChronoBuilding& Building = Buildings.FindChecked(BuildingId);
 		Buckets.FindOrAdd(GetBucket(Building.Footprint.Center)).Add(BuildingId);
+		if (Building.Service != EChronoServiceType::None)
+		{
+			ServiceBuildingIds.Add(BuildingId);
+		}
 		for (int32 Slot = Building.FirstSlot; Slot < Building.FirstSlot + Building.WidthCells; ++Slot)
 		{
 			for (int32 Row = 0; Row < Building.DepthCells; ++Row)
@@ -492,8 +641,9 @@ void FChronoBuildingSet::RebuildIndices()
 
 bool FChronoBuildingSet::Serialize(FArchive& Ar)
 {
-	// Bump when the binary layout changes. Version 2 adds the floor count.
-	const int32 CurrentVersion = 2;
+	// Bump when the binary layout changes. Version 2 adds the floor count,
+	// version 3 the level and the service fields.
+	const int32 CurrentVersion = 3;
 	// Sanity bounds on values read from a file.
 	const int32 MaxBuildings = 4 * 1024 * 1024;
 	const int32 MaxLotCells = 64;
@@ -528,12 +678,14 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 		FString DefId;
 		uint8 ZoneByte = 0;
 		uint8 RoofByte = 0;
+		uint8 ServiceByte = 0;
 		if (Ar.IsSaving())
 		{
 			Building = Buildings.FindChecked(BuildingIds[Index]);
 			DefId = Building.DefId.ToString();
 			ZoneByte = static_cast<uint8>(Building.Zone);
 			RoofByte = static_cast<uint8>(Building.Roof);
+			ServiceByte = static_cast<uint8>(Building.Service);
 		}
 
 		Ar << Building.Id;
@@ -554,6 +706,11 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 		Ar << RoofByte;
 		Ar << Building.RoofHeightCm;
 		Ar << Building.LandValue;
+		Ar << Building.Level;
+		Ar << Building.bPlayerPlaced;
+		Ar << ServiceByte;
+		Ar << Building.ServiceRadiusCm;
+		Ar << Building.UpkeepPerDay;
 
 		if (Ar.IsLoading())
 		{
@@ -562,6 +719,9 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 				&& !Buildings.Contains(Building.Id)
 				&& ZoneByte > 0 && ZoneByte < static_cast<uint8>(EChronoZoneType::Count)
 				&& RoofByte <= static_cast<uint8>(EChronoRoofType::Gable)
+				&& ServiceByte < static_cast<uint8>(EChronoServiceType::Count)
+				&& Building.Level >= 1 && Building.Level <= 3
+				&& Building.ServiceRadiusCm >= 0.0f && Building.UpkeepPerDay >= 0.0f
 				&& (Building.Side == 1 || Building.Side == -1)
 				&& Building.FirstSlot >= 0
 				&& Building.WidthCells >= 1 && Building.DepthCells >= 1
@@ -575,6 +735,7 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 				Building.DefId = FName(*DefId);
 				Building.Zone = static_cast<EChronoZoneType>(ZoneByte);
 				Building.Roof = static_cast<EChronoRoofType>(RoofByte);
+				Building.Service = static_cast<EChronoServiceType>(ServiceByte);
 				Buildings.Add(Building.Id, Building);
 			}
 		}

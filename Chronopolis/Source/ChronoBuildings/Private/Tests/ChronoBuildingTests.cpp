@@ -170,4 +170,94 @@ bool FChronoBuildingGrowthTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoBuildingServiceTest, "Chronopolis.Buildings.ServicesAndLevels",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter)
+
+bool FChronoBuildingServiceTest::RunTest(const FString& Parameters)
+{
+	ChronoBuildingTests::FTown Town;
+	TestTrue(TEXT("Road is built"), Town.Build(FVector2D(-10200.0, 0.0), FVector2D(10200.0, 0.0)));
+
+	FChronoBuildingDefData Well;
+	Well.DefId = TEXT("TestWell");
+	Well.Zone = EChronoZoneType::Civic;
+	Well.Service = EChronoServiceType::Water;
+	Well.ServiceRadiusCm = 6000.0f;
+	Well.UpkeepPerDay = 2.0f;
+	Well.MaxFloors = 1;
+
+	// The player places a well on unzoned land, by clicking a cell of the second row.
+	const FVector2D Near(-1800.0, 1050.0);
+	const FVector2D Far(9000.0, 1050.0);
+	const float ValueBefore = Town.Buildings.ComputeLandValue(Near, true, Town.BuildingRules);
+
+	const int32 ClickedCell = Town.Zoning.FindCellAt(FVector2D(-1800.0, 1850.0));
+	TestTrue(TEXT("There is a cell to click"), ClickedCell != INDEX_NONE);
+	const int32 WellId = Town.Buildings.PlaceBuilding(Town.Zoning, Town.Heightfield, Town.Graph, ClickedCell, Well, Town.BuildingRules);
+	TestTrue(TEXT("The well is placed"), WellId != INDEX_NONE);
+
+	const FChronoBuilding* Placed = Town.Buildings.FindBuilding(WellId);
+	TestTrue(TEXT("The well stands on the front row"), Placed && Placed->bPlayerPlaced && Placed->Footprint.Contains(Near));
+	TestTrue(TEXT("The same lot cannot be used twice"), Town.Buildings.PlaceBuilding(Town.Zoning, Town.Heightfield, Town.Graph, ClickedCell, Well, Town.BuildingRules) == INDEX_NONE);
+
+	// Coverage: inside the radius, not outside.
+	const uint32 WaterBit = 1u << static_cast<uint32>(EChronoServiceType::Water);
+	TestTrue(TEXT("The well serves its surroundings"), (Town.Buildings.GetServiceMaskAt(Near) & WaterBit) != 0);
+	TestTrue(TEXT("The well does not serve the far end of the road"), Town.Buildings.GetServiceMaskAt(Far) == 0);
+	TestEqual(TEXT("One service is counted"), FChronoBuildingSet::CountServices(Town.Buildings.GetServiceMaskAt(Near)), 1);
+	TestTrue(TEXT("A service raises the land value"), Town.Buildings.ComputeLandValue(Near, true, Town.BuildingRules) > ValueBefore);
+	TestTrue(TEXT("The well costs upkeep"), FMath::IsNearlyEqual(Town.Buildings.GetTotalUpkeepPerDay(), 2.0, 0.001));
+	TestEqual(TEXT("The well is found under the cursor"), Town.Buildings.FindBuildingAt(Placed ? Placed->Footprint.Center : Far), WellId);
+
+	// A city grows around it. Services never grow by themselves.
+	Town.Definitions.Add(Well);
+	Town.Zoning.PaintZone(FVector2D(0.0, 0.0), 20000.0f, EChronoZoneType::Residential);
+	Town.Zoning.TakeDirtySegments();
+	Town.Grow(40);
+	TestTrue(TEXT("Only the placed well provides a service"), FMath::IsNearlyEqual(Town.Buildings.GetTotalUpkeepPerDay(), 2.0, 0.001));
+
+	// Levels: where neighbors and services raise the land value, buildings gain a storey.
+	int32 NumUpgraded = 0;
+	for (int32 Step = 0; Step < 200; ++Step)
+	{
+		FRandomStream Random(7000 + Step);
+		NumUpgraded += Town.Buildings.UpgradeBuildings(Town.BuildingRules, Random, 1);
+	}
+	AddInfo(FString::Printf(TEXT("%d upgrades among %d buildings"), NumUpgraded, Town.Buildings.GetNumBuildings()));
+	TestTrue(TEXT("Some buildings gain a level"), NumUpgraded > 0);
+
+	bool bLevelsCoherent = true;
+	bool bWellUntouched = true;
+	for (const TPair<int32, FChronoBuilding>& Pair : Town.Buildings.GetBuildings())
+	{
+		const FChronoBuilding& Building = Pair.Value;
+		bLevelsCoherent = bLevelsCoherent && Building.Level >= 1 && Building.Level <= Town.BuildingRules.MaxLevel && Building.Floors >= Building.Level;
+		if (Building.bPlayerPlaced)
+		{
+			bWellUntouched = bWellUntouched && Building.Level == 1;
+		}
+	}
+	TestTrue(TEXT("Levels stay within bounds and add storeys"), bLevelsCoherent);
+	TestTrue(TEXT("Services do not level up"), bWellUntouched);
+
+	// Erasing the zone removes what grew, not what the player placed.
+	Town.Zoning.PaintZone(FVector2D(0.0, 0.0), 20000.0f, EChronoZoneType::None);
+	Town.Buildings.RemoveInvalid(Town.Zoning, Town.Zoning.TakeDirtySegments());
+	TestEqual(TEXT("Only the placed well remains"), Town.Buildings.GetNumBuildings(), 1);
+
+	// Save and load keep the service.
+	TArray<uint8> Bytes;
+	FMemoryWriter Writer(Bytes);
+	TestTrue(TEXT("Buildings are saved"), Town.Buildings.Serialize(Writer));
+	FChronoBuildingSet Loaded;
+	FMemoryReader Reader(Bytes);
+	TestTrue(TEXT("Buildings are loaded"), Loaded.Serialize(Reader));
+	TestTrue(TEXT("The loaded well still serves its surroundings"), (Loaded.GetServiceMaskAt(Near) & WaterBit) != 0);
+
+	TestTrue(TEXT("The well is demolished"), Town.Buildings.DemolishBuilding(WellId));
+	TestTrue(TEXT("Nothing is served any more"), Town.Buildings.GetServiceMaskAt(Near) == 0);
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

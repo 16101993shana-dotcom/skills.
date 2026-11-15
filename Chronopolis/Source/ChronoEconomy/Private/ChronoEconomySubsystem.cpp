@@ -1,8 +1,10 @@
 #include "ChronoEconomySubsystem.h"
 
+#include "ChronoBuildingSubsystem.h"
 #include "ChronoCore.h"
 #include "ChronoPopulationSubsystem.h"
 #include "ChronoRoadSubsystem.h"
+#include "ChronoRoadTypes.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 
@@ -36,6 +38,31 @@ namespace ChronoEconomySubsystemPrivate
 		Economy->SetTaxRatePercent(Zone, FCString::Atof(*Args[1]));
 		UE_LOG(LogChrono, Display, TEXT("Tax of zone %d set to %.1f %%"), ZoneIndex, Economy->GetTaxRatePercent(Zone));
 	}
+
+	void LoanFromConsole(const TArray<FString>& Args, UWorld* World)
+	{
+		UChronoEconomySubsystem* Economy = World ? World->GetSubsystem<UChronoEconomySubsystem>() : nullptr;
+		if (!Economy || Args.Num() < 1)
+		{
+			UE_LOG(LogChrono, Warning, TEXT("Usage: Chrono.Loan <amount>"));
+			return;
+		}
+
+		const double Amount = FCString::Atod(*Args[0]);
+		if (Economy->TakeLoan(Amount))
+		{
+			UE_LOG(LogChrono, Display, TEXT("Borrowed %.0f. Debt: %.0f, treasury: %.0f"), Amount, Economy->GetDebt(), Economy->GetTreasury());
+		}
+		else
+		{
+			UE_LOG(LogChrono, Warning, TEXT("Loan refused: it would exceed the debt limit"));
+		}
+	}
+
+	FAutoConsoleCommandWithWorldAndArgs LoanCommand(
+		TEXT("Chrono.Loan"),
+		TEXT("Chrono.Loan <amount>: borrows money, repaid with interest day by day."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&LoanFromConsole));
 
 	FAutoConsoleCommandWithWorld StatsCommand(
 		TEXT("Chrono.City.Stats"),
@@ -95,12 +122,40 @@ float UChronoEconomySubsystem::GetTaxRatePercent(EChronoZoneType Zone) const
 	return Zone < EChronoZoneType::Count ? Budget.GetTaxRate(Zone) * 100.0f : 0.0f;
 }
 
+bool UChronoEconomySubsystem::Spend(double Cost)
+{
+	if (!Budget.Spend(Cost))
+	{
+		return false;
+	}
+	OnBudgetChanged.Broadcast();
+	return true;
+}
+
+double UChronoEconomySubsystem::EstimateRoadCost(const FChronoRoadBuildRequest& Request) const
+{
+	return ChronoEconomy::EstimateRoadCost(Request, Rules);
+}
+
+bool UChronoEconomySubsystem::TakeLoan(double Amount)
+{
+	if (!Budget.TakeLoan(Amount, Rules))
+	{
+		return false;
+	}
+	OnBudgetChanged.Broadcast();
+	return true;
+}
+
 void UChronoEconomySubsystem::HandleDayStepped(int64 DayIndex, const FChronoPopulationStats& Stats)
 {
 	const UChronoRoadSubsystem* Roads = GetWorld() ? GetWorld()->GetSubsystem<UChronoRoadSubsystem>() : nullptr;
 	const double RoadAreaM2 = Roads ? ChronoEconomy::ComputeRoadAreaM2(Roads->GetGraph()) : 0.0;
 
-	Budget.StepDay(Stats, RoadAreaM2, Rules);
+	const UChronoBuildingSubsystem* Buildings = GetWorld() ? GetWorld()->GetSubsystem<UChronoBuildingSubsystem>() : nullptr;
+	const double ServiceUpkeep = Buildings ? Buildings->GetBuildingSet().GetTotalUpkeepPerDay() : 0.0;
+
+	Budget.StepDay(Stats, RoadAreaM2, ServiceUpkeep, Rules);
 	OnBudgetChanged.Broadcast();
 }
 
@@ -129,8 +184,12 @@ void UChronoEconomySubsystem::LogCityStats() const
 		Population->GetZoneDemand(EChronoZoneType::Residential), Population->GetZoneDemand(EChronoZoneType::Commercial),
 		Population->GetZoneDemand(EChronoZoneType::Industrial), Population->GetZoneDemand(EChronoZoneType::Agricultural),
 		Population->GetZoneDemand(EChronoZoneType::Civic));
-	UE_LOG(LogChrono, Display, TEXT("  Treasury: %.0f. Last month: income %.0f, expenses %.0f"),
-		Budget.GetTreasury(), Budget.GetLastMonth().GetIncome(), Budget.GetLastMonth().GetExpenses());
+	UE_LOG(LogChrono, Display, TEXT("  Households served: water %d, health %d, security %d, fire %d, education %d (of %d)"),
+		Stats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Water)], Stats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Health)],
+		Stats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Security)], Stats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Fire)],
+		Stats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Education)], Stats.Households);
+	UE_LOG(LogChrono, Display, TEXT("  Treasury: %.0f, debt: %.0f. Last month: income %.0f, expenses %.0f"),
+		Budget.GetTreasury(), Budget.GetDebt(), Budget.GetLastMonth().GetIncome(), Budget.GetLastMonth().GetExpenses());
 	UE_LOG(LogChrono, Display, TEXT("  Science: %.1f (+%.2f per day). Culture: %.1f (+%.2f per day)"),
 		Budget.GetScience(), Budget.GetSciencePerDay(), Budget.GetCulture(), Budget.GetCulturePerDay());
 }

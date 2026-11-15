@@ -57,6 +57,18 @@ struct CHRONOCITIZENS_API FChronoPopulationRules
 	/** Share of the gap to the target happiness closed each day. */
 	float HappinessAdjustPerDay = 0.1f;
 
+	// ---- Public services: happiness gained by a household whose home is covered ----
+	float WaterHappiness = 6.0f;
+	float HealthHappiness = 5.0f;
+	float SecurityHappiness = 5.0f;
+	float FireHappiness = 3.0f;
+	float EducationHappiness = 5.0f;
+	/** Happiness lost by a household whose home has no water. */
+	float NoWaterPenalty = 10.0f;
+
+	/** Happiness change of a household, from the services that cover its home (bit mask of EChronoServiceType). */
+	float GetServiceHappiness(uint32 ServiceMask) const;
+
 	// ---- Demand ----
 	/** Share of all jobs that each kind of workplace should provide. */
 	float TargetCommercialJobShare = 0.35f;
@@ -124,6 +136,9 @@ struct FChronoPopulationStats
 
 	float AverageHappiness = 0.0f;
 
+	/** Households whose home is covered by each service, indexed by EChronoServiceType. */
+	int32 HouseholdsServed[static_cast<int32>(EChronoServiceType::Count)] = {};
+
 	int32 BirthsToday = 0;
 	int32 DeathsToday = 0;
 	int32 ImmigrantsToday = 0;
@@ -181,6 +196,8 @@ private:
 		int32 Households = 0;
 		int32 Jobs = 0;
 		int32 Workers = 0;
+		/** Services that cover the building, as a bit mask of EChronoServiceType. Only filled for homes. */
+		uint32 ServiceMask = 0;
 	};
 
 	/** Recounts occupancy; households and workers whose building is gone or full are displaced. */

@@ -91,6 +91,26 @@ namespace ChronoPopulationTests
 			}
 		}
 
+		/** Places wells and the four other services so that the whole housing area is covered. */
+		void PlaceServices()
+		{
+			const EChronoServiceType Services[5] = { EChronoServiceType::Water, EChronoServiceType::Health, EChronoServiceType::Security, EChronoServiceType::Fire, EChronoServiceType::Education };
+			for (int32 Index = 0; Index < 5; ++Index)
+			{
+				FChronoBuildingDefData Definition;
+				Definition.DefId = TEXT("TestService");
+				Definition.Zone = EChronoZoneType::Civic;
+				Definition.Service = Services[Index];
+				Definition.ServiceRadiusCm = 30000.0f;
+				Definition.MaxFloors = 1;
+
+				// One per service along the central street, away from its intersections.
+				const double Places[5] = { -7000.0, -5400.0, -3800.0, -2200.0, 2200.0 };
+				const int32 CellId = Zoning.FindCellAt(FVector2D(Places[Index], 1050.0));
+				Buildings.PlaceBuilding(Zoning, Heightfield, Graph, CellId, Definition, BuildingRules);
+			}
+		}
+
 		/** One day: the population lives, then buildings grow where it asks for them. */
 		void StepDays(int32 NumDays)
 		{
@@ -219,6 +239,42 @@ bool FChronoPopulationTaxTest::RunTest(const FString& Parameters)
 
 	TestTrue(TEXT("High taxes make people less happy"), Greedy.Population.GetStats().AverageHappiness < Fair.Population.GetStats().AverageHappiness);
 	TestTrue(TEXT("High taxes keep the city smaller"), Greedy.Population.GetStats().Population < Fair.Population.GetStats().Population);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoPopulationServicesTest, "Chronopolis.Population.ServicesMakePeopleHappier",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter)
+
+bool FChronoPopulationServicesTest::RunTest(const FString& Parameters)
+{
+	ChronoPopulationTests::FTown Bare;
+	ChronoPopulationTests::FTown Served;
+	Served.PlaceServices();
+	TestEqual(TEXT("Five services are placed"), Served.Buildings.GetNumBuildings(), 5);
+
+	Bare.StepDays(2 * 365);
+	Served.StepDays(2 * 365);
+
+	const FChronoPopulationStats& BareStats = Bare.Population.GetStats();
+	const FChronoPopulationStats& ServedStats = Served.Population.GetStats();
+	AddInfo(FString::Printf(TEXT("Without services: %d inhabitants, happiness %.0f. With services: %d inhabitants, happiness %.0f, %d of %d households with water"),
+		BareStats.Population, BareStats.AverageHappiness, ServedStats.Population, ServedStats.AverageHappiness,
+		ServedStats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Water)], ServedStats.Households));
+
+	TestEqual(TEXT("Nobody is served without services"), BareStats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Water)], 0);
+	TestEqual(TEXT("Every household has water once wells cover the town"), ServedStats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Water)], ServedStats.Households);
+	TestTrue(TEXT("Services make people happier"), ServedStats.AverageHappiness > BareStats.AverageHappiness + 10.0f);
+
+	// The service buildings employ people too.
+	TestTrue(TEXT("Service buildings provide civic jobs"), ServedStats.JobsByZone[static_cast<int32>(EChronoZoneType::Civic)] >= 5);
+
+	FString Error;
+	TestTrue(TEXT("Population data is coherent"), Served.Population.CheckInvariants(Error));
+	if (!Error.IsEmpty())
+	{
+		AddError(Error);
+	}
 
 	return true;
 }

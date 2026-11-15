@@ -417,7 +417,7 @@ int32 ChronoClippingAudit::RunBuildings(const FChronoHeightfield& Heightfield, c
 			for (int32 Row = 0; Row < Building.DepthCells && bLotIntact; ++Row)
 			{
 				const FChronoZoneCell* Cell = Grid.FindCellByKey(Building.SegmentId, Building.Side, Slot, Row);
-				bLotIntact = Cell && Cell->Zone == Building.Zone;
+				bLotIntact = Cell && (Building.bPlayerPlaced || Cell->Zone == Building.Zone);
 			}
 		}
 		if (!bLotIntact)

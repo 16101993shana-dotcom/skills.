@@ -36,6 +36,39 @@ public:
 	int32 Grow(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxNewBuildings, const FChronoZoneDemand* Demand = nullptr);
 
 	/**
+	 * Places a building chosen by the player (a service) with its lot starting
+	 * at the front-row cell of AnchorCellId's slot. The zone of the cells does
+	 * not matter. Returns the id of the new building, or INDEX_NONE if it does
+	 * not fit there.
+	 */
+	int32 PlaceBuilding(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, int32 AnchorCellId, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules);
+
+	/** Removes one building. Returns false if it does not exist. */
+	bool DemolishBuilding(int32 BuildingId);
+
+	/** Building whose walls contain a point, or INDEX_NONE. */
+	int32 FindBuildingAt(const FVector2D& Point) const;
+
+	/**
+	 * Services that cover a point, as a bit mask: bit N is set when a building
+	 * providing service N (EChronoServiceType) is within its radius.
+	 */
+	uint32 GetServiceMaskAt(const FVector2D& Point) const;
+
+	/** Number of bits set in a service mask. */
+	static int32 CountServices(uint32 ServiceMask);
+
+	/** Daily upkeep of every building placed by the player. */
+	double GetTotalUpkeepPerDay() const;
+
+	/**
+	 * Lets up to MaxUpgrades grown buildings gain a level, and a storey, where
+	 * the land value has reached the threshold of their next level.
+	 * @return the number of buildings upgraded.
+	 */
+	int32 UpgradeBuildings(const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxUpgrades);
+
+	/**
 	 * Removes the buildings of the given segments whose lot no longer exists
 	 * or was given another zone. Returns the number removed.
 	 */
@@ -62,8 +95,12 @@ public:
 	TArray<int32> TakeDirtySegments();
 
 private:
-	/** Tries to place one definition with its lot starting at a front-row cell. */
-	bool TryPlace(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules);
+	/**
+	 * Tries to place one definition with its lot starting at a front-row cell.
+	 * @param bPlayerPlaced true for a service: the zone of the cells and the land value are ignored.
+	 * @return the id of the new building, or INDEX_NONE.
+	 */
+	int32 TryPlace(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules, bool bPlayerPlaced);
 
 	void AddBuilding(const FChronoBuilding& Building);
 	void RemoveBuilding(int32 BuildingId);
@@ -82,6 +119,9 @@ private:
 
 	/** Spatial hash: building ids by bucket of their footprint center. */
 	TMap<FIntPoint, TArray<int32>> Buckets;
+
+	/** Buildings that provide a service, for coverage queries. */
+	TArray<int32> ServiceBuildingIds;
 
 	TSet<int32> DirtySegments;
 	int32 NextBuildingId = 1;

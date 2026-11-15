@@ -118,6 +118,27 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Happiness", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float HappinessAdjustPerDay = 0.1f;
 
+	// ---- Public services: happiness gained by a household whose home is covered ----
+
+	UPROPERTY(Config, EditAnywhere, Category = "Services", meta = (ClampMin = "0.0"))
+	float WaterHappiness = 6.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Services", meta = (ClampMin = "0.0"))
+	float HealthHappiness = 5.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Services", meta = (ClampMin = "0.0"))
+	float SecurityHappiness = 5.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Services", meta = (ClampMin = "0.0"))
+	float FireHappiness = 3.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Services", meta = (ClampMin = "0.0"))
+	float EducationHappiness = 5.0f;
+
+	/** Happiness lost by a household whose home has no water. */
+	UPROPERTY(Config, EditAnywhere, Category = "Services", meta = (ClampMin = "0.0"))
+	float NoWaterPenalty = 10.0f;
+
 	// ---- Demand ----
 
 	UPROPERTY(Config, EditAnywhere, Category = "Demand", meta = (ClampMin = "0.0", ClampMax = "1.0"))

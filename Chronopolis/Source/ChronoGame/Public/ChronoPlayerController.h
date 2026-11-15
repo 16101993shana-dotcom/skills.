@@ -18,7 +18,8 @@ enum class EChronoToolMode : uint8
 {
 	Terraform,
 	Road,
-	Zone
+	Zone,
+	Service
 };
 
 UCLASS()
@@ -37,7 +38,7 @@ public:
 	UFUNCTION(Exec)
 	void ChronoSetSpeed(int32 SpeedIndex);
 
-	/** Console: ChronoTool 0 (terraform), 1 (road) or 2 (zoning). */
+	/** Console: ChronoTool 0 (terraform), 1 (road), 2 (zoning) or 3 (services). */
 	UFUNCTION(Exec)
 	void ChronoTool(int32 ToolIndex);
 
@@ -57,8 +58,16 @@ public:
 	UFUNCTION(Exec)
 	void ChronoGrow(int32 Count);
 
+	/** Console: ChronoService <index> picks the service building to place (0 is the first of the project settings). */
+	UFUNCTION(Exec)
+	void ChronoService(int32 Index);
+
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
 	void SetToolMode(EChronoToolMode NewMode);
+
+	/** Service building placed by the service tool. */
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
+	void SetServiceBuilding(FName DefId);
 
 	/** Zone type painted by the zoning tool. */
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
@@ -155,6 +164,10 @@ private:
 	void DrawRoadPreview() const;
 
 	void PaintZoneUnderCursor(EChronoZoneType Zone);
+	void PlaceServiceUnderCursor();
+
+	/** Service building selected in the service tool. */
+	FName ServiceDefId = NAME_None;
 
 	EChronoToolMode ToolMode = EChronoToolMode::Terraform;
 	EChronoZoneType PaintZone = EChronoZoneType::Residential;

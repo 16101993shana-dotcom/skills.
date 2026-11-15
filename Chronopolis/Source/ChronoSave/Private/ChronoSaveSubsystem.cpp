@@ -29,8 +29,9 @@ namespace ChronoSavePrivate
 	// Bump when a block is added or changed. Older files are refused for now;
 	// migration code goes here when the format has shipped.
 	// Version 2 adds the zoning grid after the roads, version 3 the buildings,
-	// version 4 the population and the budget.
-	const int32 FileVersion = 4;
+	// version 4 the population and the budget, version 5 services, building
+	// levels and loans.
+	const int32 FileVersion = 5;
 
 	const TCHAR* DefaultSlot = TEXT("quicksave");
 

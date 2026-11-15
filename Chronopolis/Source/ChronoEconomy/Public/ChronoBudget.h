@@ -10,6 +10,7 @@
 #include "ChronoZoneGrid.h"
 
 class FChronoRoadGraph;
+struct FChronoRoadBuildRequest;
 
 /** Tunables of the economy. In game they come from UChronoEconomySettings. */
 struct CHRONOECONOMY_API FChronoEconomyRules
@@ -30,7 +31,15 @@ struct CHRONOECONOMY_API FChronoEconomyRules
 	/** Daily upkeep of one square meter of road. */
 	float RoadUpkeepPerM2PerDay = 0.0008f;
 
+	/** Price of one square meter of new road. */
+	float RoadCostPerM2 = 0.5f;
+
 	int32 DaysPerMonth = 30;
+
+	// Loans: a fixed total interest, repaid in equal daily payments.
+	double MaxDebt = 50000.0;
+	float LoanInterestRate = 0.1f;
+	int32 LoanTermDays = 360;
 
 	// Science and culture: a little from everybody, more from civic workers.
 	// Culture also follows how happy people are.
@@ -50,9 +59,12 @@ struct CHRONOECONOMY_API FChronoLedger
 	double IndustrialTax = 0.0;
 	double AgriculturalTax = 0.0;
 	double RoadUpkeep = 0.0;
+	double ServiceUpkeep = 0.0;
+	double Construction = 0.0;
+	double LoanRepayment = 0.0;
 
 	double GetIncome() const { return ResidentialTax + CommercialTax + IndustrialTax + AgriculturalTax; }
-	double GetExpenses() const { return RoadUpkeep; }
+	double GetExpenses() const { return RoadUpkeep + ServiceUpkeep + Construction + LoanRepayment; }
 	double GetNet() const { return GetIncome() - GetExpenses(); }
 
 	void Add(const FChronoLedger& Other);
@@ -72,8 +84,24 @@ public:
 	/** Tax rates in the form the population simulation takes them. */
 	const FChronoCityConditions& GetConditions() const { return Conditions; }
 
-	/** Collects one day of taxes, pays one day of upkeep, and adds one day of science and culture. */
-	void StepDay(const FChronoPopulationStats& Stats, double RoadAreaM2, const FChronoEconomyRules& Rules);
+	/** Collects one day of taxes, pays one day of upkeep and loan repayments, and adds one day of science and culture. */
+	void StepDay(const FChronoPopulationStats& Stats, double RoadAreaM2, double ServiceUpkeepPerDay, const FChronoEconomyRules& Rules);
+
+	/** True if the treasury holds at least Cost. */
+	bool CanAfford(double Cost) const { return Treasury >= Cost; }
+
+	/** Pays for a construction now. Returns false, and pays nothing, if the treasury is too low. */
+	bool Spend(double Cost);
+
+	/**
+	 * Borrows Amount: the treasury receives it at once, and the amount plus
+	 * interest is repaid day by day. Returns false if it would exceed the debt limit.
+	 */
+	bool TakeLoan(double Amount, const FChronoEconomyRules& Rules);
+
+	/** What remains to be repaid, interest included. */
+	double GetDebt() const;
+	int32 GetNumLoans() const { return Loans.Num(); }
 
 	double GetTreasury() const { return Treasury; }
 	const FChronoLedger& GetToday() const { return Today; }
@@ -90,8 +118,19 @@ public:
 	bool Serialize(FArchive& Ar);
 
 private:
+	struct FLoan
+	{
+		double Remaining = 0.0;
+		double DailyPayment = 0.0;
+	};
+
 	FChronoCityConditions Conditions;
 	double Treasury = 0.0;
+
+	TArray<FLoan> Loans;
+
+	/** Paid since the last day step, reported in the ledger of the next one. */
+	double ConstructionSinceLastDay = 0.0;
 
 	FChronoLedger Today;
 	FChronoLedger CurrentMonth;
@@ -108,4 +147,7 @@ namespace ChronoEconomy
 {
 	/** Surface of every road of the network, sidewalks included, in square meters. */
 	CHRONOECONOMY_API double ComputeRoadAreaM2(const FChronoRoadGraph& Graph);
+
+	/** Price of the road a request would build, from its length and width. */
+	CHRONOECONOMY_API double EstimateRoadCost(const FChronoRoadBuildRequest& Request, const FChronoEconomyRules& Rules);
 }

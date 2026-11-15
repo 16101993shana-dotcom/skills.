@@ -11,6 +11,22 @@
 class UMaterialInterface;
 class UStaticMesh;
 
+/**
+ * Public services, placed by the player. Each one serves the buildings within
+ * its radius: they are happier and worth more.
+ */
+UENUM(BlueprintType)
+enum class EChronoServiceType : uint8
+{
+	None,
+	Water,
+	Health,
+	Security,
+	Fire,
+	Education,
+	Count UMETA(Hidden)
+};
+
 UENUM(BlueprintType)
 enum class EChronoRoofType : uint8
 {
@@ -77,6 +93,25 @@ struct CHRONOBUILDINGS_API FChronoBuildingDefData
 	float Weight = 1.0f;
 
 	/**
+	 * Service provided. None for the buildings that grow by themselves on
+	 * zoned land; any other value makes this a building the player places.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Service")
+	EChronoServiceType Service = EChronoServiceType::None;
+
+	/** Buildings within this distance are served. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Service", meta = (ClampMin = "0.0"))
+	float ServiceRadiusCm = 15000.0f;
+
+	/** Price paid when the player places the building. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Service", meta = (ClampMin = "0.0"))
+	float ConstructionCost = 0.0f;
+
+	/** Paid every day for as long as the building stands. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Service", meta = (ClampMin = "0.0"))
+	float UpkeepPerDay = 0.0f;
+
+	/**
 	 * Finished model of the building. When set, it is drawn instead of the
 	 * generated greybox volume. Its pivot must be at the center of the
 	 * footprint, at floor level, with +X along the road.
@@ -117,8 +152,29 @@ struct FChronoBuilding
 	EChronoRoofType Roof = EChronoRoofType::Flat;
 	float RoofHeightCm = 0.0f;
 
-	/** Land value when the building appeared. */
+	/** Land value when the building appeared or was last upgraded. */
 	float LandValue = 0.0f;
+
+	/** 1 when built. A grown building gains a level, and a storey, when its land value rises enough. */
+	int32 Level = 1;
+
+	/** True for a building placed by the player (a service), false for one that grew on zoned land. */
+	bool bPlayerPlaced = false;
+
+	EChronoServiceType Service = EChronoServiceType::None;
+	float ServiceRadiusCm = 0.0f;
+	float UpkeepPerDay = 0.0f;
+};
+
+/** Why a building could not be placed by the player. */
+UENUM(BlueprintType)
+enum class EChronoPlaceResult : uint8
+{
+	Success,
+	UnknownBuilding,
+	NoLot,
+	DoesNotFit,
+	NotEnoughMoney
 };
 
 /**
@@ -151,6 +207,15 @@ struct CHRONOBUILDINGS_API FChronoBuildingRules
 	float IndustryLandValuePenalty = 6.0f;
 	float NeighborRadiusCm = 8000.0f;
 	float MaxLandValue = 100.0f;
+
+	/** Land value added by each public service that covers a place. */
+	float ServiceLandValue = 5.0f;
+
+	// Levels: a grown building gains a storey when its land value reaches the
+	// threshold of the next level.
+	int32 MaxLevel = 3;
+	float Level2LandValue = 55.0f;
+	float Level3LandValue = 75.0f;
 
 	static FChronoBuildingRules FromSettings();
 };
@@ -224,6 +289,26 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category = "Land Value", meta = (ClampMin = "1.0"))
 	float MaxLandValue = 100.0f;
+
+	/** Land value added by each public service that covers a place. */
+	UPROPERTY(Config, EditAnywhere, Category = "Land Value", meta = (ClampMin = "0.0"))
+	float ServiceLandValue = 5.0f;
+
+	// ---- Levels ----
+
+	/** Highest level a grown building can reach. Each level adds a storey. */
+	UPROPERTY(Config, EditAnywhere, Category = "Levels", meta = (ClampMin = "1", ClampMax = "3"))
+	int32 MaxLevel = 3;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Levels", meta = (ClampMin = "0.0"))
+	float Level2LandValue = 55.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Levels", meta = (ClampMin = "0.0"))
+	float Level3LandValue = 75.0f;
+
+	/** Buildings that may gain a level in one growth step. */
+	UPROPERTY(Config, EditAnywhere, Category = "Levels", meta = (ClampMin = "0", ClampMax = "64"))
+	int32 UpgradesPerStep = 1;
 
 	// ---- Rendering ----
 
