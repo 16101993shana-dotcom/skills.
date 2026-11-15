@@ -227,9 +227,8 @@ bool UChronoSaveSubsystem::LoadGame(const FString& SlotName)
 	// changed, and the saved set then replaces whatever is left.
 	const bool bBuildingsLoaded = bZoningLoaded && Buildings->SerializeBuildings(Reader);
 
-	// The population needs the buildings (homes and jobs), the budget needs
-	// nothing but is saved last. The clock is restored before both, so the
-	// population resumes on the right day.
+	// The population needs the buildings (homes and jobs), so it comes after
+	// them. It takes its day number from the clock, restored below.
 	const bool bPopulationLoaded = bBuildingsLoaded && Population->SerializePopulation(Reader);
 	const bool bEconomyLoaded = bPopulationLoaded && Economy->SerializeEconomy(Reader);
 	if (!bEconomyLoaded)
