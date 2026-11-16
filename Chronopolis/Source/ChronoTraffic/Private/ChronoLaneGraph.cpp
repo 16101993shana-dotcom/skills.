@@ -22,6 +22,61 @@ namespace ChronoLaneGraphPrivate
 		return Length;
 	}
 
+	/**
+	 * Path of a pedestrian through a junction, from the end of one sidewalk
+	 * lane to the start of another. Heights follow the surface walked on: a
+	 * junction is level at the height of its node; sidewalks are higher by
+	 * the curb, which shows as a short steep piece where the path steps off
+	 * or onto one.
+	 */
+	void BuildWalkPath(const FVector& Start, const FVector& End, const FVector2D& StartDirection, double JunctionHeight, bool bCrossesOwnStreet, bool bDeadEnd, double CarriagewayWidthCm, const FChronoTrafficRules& Rules, TArray<FVector>& OutPoints)
+	{
+		const FVector2D S2(Start.X, Start.Y);
+		const FVector2D E2(End.X, End.Y);
+		auto At = [](const FVector2D& Point, double Height)
+		{
+			return FVector(Point.X, Point.Y, Height);
+		};
+
+		OutPoints.Reset();
+		const double Width = FVector2D::Distance(S2, E2);
+		if (!bCrossesOwnStreet || Width < 1.0)
+		{
+			// To another road: straight across the level surface of the junction.
+			OutPoints.Add(At(S2, JunctionHeight));
+			OutPoints.Add(At(E2, JunctionHeight));
+			return;
+		}
+
+		const FVector2D Across = (E2 - S2) / Width;
+		if (!bDeadEnd)
+		{
+			// Crossing the street one came by, in front of its stop line:
+			// a little inside the junction, clear of the end of the sidewalks
+			// and of the vehicles waiting at the line.
+			const double Inset = FMath::Min(static_cast<double>(Rules.CrossingInsetCm), 0.25 * Width);
+			OutPoints.Add(At(S2, JunctionHeight));
+			OutPoints.Add(At(S2 + StartDirection * Inset + Across * Inset, JunctionHeight));
+			OutPoints.Add(At(E2 + StartDirection * Inset - Across * Inset, JunctionHeight));
+			OutPoints.Add(At(E2, JunctionHeight));
+			return;
+		}
+
+		// Dead end: across the end of the road itself, on the sidewalk at
+		// both ends and down on the carriageway in between.
+		const double CurbRun = 0.5 * (Width - CarriagewayWidthCm);
+		const double StepRun = 1.0;
+		OutPoints.Add(Start);
+		if (Start.Z > JunctionHeight + 1.0 && End.Z > JunctionHeight + 1.0 && CurbRun > StepRun && Width > 2.0 * (CurbRun + StepRun))
+		{
+			OutPoints.Add(At(S2 + Across * (CurbRun - StepRun), Start.Z));
+			OutPoints.Add(At(S2 + Across * (CurbRun + StepRun), JunctionHeight));
+			OutPoints.Add(At(E2 - Across * (CurbRun + StepRun), JunctionHeight));
+			OutPoints.Add(At(E2 - Across * (CurbRun - StepRun), End.Z));
+		}
+		OutPoints.Add(End);
+	}
+
 	void SamplePolyline(const TArray<FVector>& Points, const TArray<double>& Distances, double Distance, FVector& OutPosition, FVector& OutDirection)
 	{
 		OutPosition = FVector::ZeroVector;
@@ -183,6 +238,8 @@ FChronoTrafficRules FChronoTrafficRules::FromSettings()
 	Rules.TurnSpeedCmPerS = Settings->TurnSpeedCmPerS;
 	Rules.ConflictClearanceCm = Settings->ConflictClearanceCm;
 	Rules.VehicleLengthCm = Settings->VehicleLengthCm;
+	Rules.VehicleWidthCm = Settings->VehicleWidthCm;
+	Rules.PedestrianWidthCm = Settings->PedestrianWidthCm;
 	Rules.VehicleMaxSpeedCmPerS = Settings->VehicleMaxSpeedCmPerS;
 	Rules.MaxAccelerationCmPerS2 = Settings->MaxAccelerationCmPerS2;
 	Rules.ComfortDecelerationCmPerS2 = Settings->ComfortDecelerationCmPerS2;
@@ -192,6 +249,17 @@ FChronoTrafficRules FChronoTrafficRules::FromSettings()
 	Rules.ReserveDistanceCm = Settings->ReserveDistanceCm;
 	Rules.StuckTimeoutSeconds = Settings->StuckTimeoutSeconds;
 	Rules.MaxActiveVehicles = Settings->MaxActiveVehicles;
+	Rules.PedestrianClearanceCm = Settings->PedestrianClearanceCm;
+	Rules.RoadEdgeMarginCm = Settings->RoadEdgeMarginCm;
+	Rules.PedestrianSideClearanceCm = Settings->PedestrianSideClearanceCm;
+	Rules.CrossingInsetCm = Settings->CrossingInsetCm;
+	Rules.PedestrianLengthCm = Settings->PedestrianLengthCm;
+	Rules.PedestrianMaxSpeedCmPerS = Settings->PedestrianMaxSpeedCmPerS;
+	Rules.PedestrianAccelerationCmPerS2 = Settings->PedestrianAccelerationCmPerS2;
+	Rules.PedestrianDecelerationCmPerS2 = Settings->PedestrianDecelerationCmPerS2;
+	Rules.PedestrianMinGapCm = Settings->PedestrianMinGapCm;
+	Rules.PedestrianTimeHeadwaySeconds = Settings->PedestrianTimeHeadwaySeconds;
+	Rules.WalkDistanceCm = Settings->WalkDistanceCm;
 	return Rules;
 }
 
@@ -290,6 +358,55 @@ void FChronoLaneGraph::Build(const FChronoRoadGraph& Graph, const FChronoTraffic
 				Lanes.Add(MoveTemp(Lane));
 			}
 		}
+
+		// Pedestrians: one lane on each side, walked in the same direction as
+		// the traffic beside it. On the sidewalk where there is one, at curb
+		// height. On a road without sidewalks, along the edge of the
+		// carriageway, as long as that leaves room beside the vehicles;
+		// a road too narrow for both is not walked.
+		const bool bSidewalk = Segment.Profile.HasSidewalk() && Segment.Profile.SidewalkWidthCm >= Rules.PedestrianWidthCm;
+		double WalkLateral = 0.5 * Carriageway + 0.5 * Segment.Profile.SidewalkWidthCm;
+		double WalkHeight = Segment.Profile.CurbHeightCm;
+		if (!bSidewalk)
+		{
+			const double OuterLaneCenter = 0.5 * Carriageway - 0.5 * LaneWidth;
+			WalkLateral = 0.5 * Carriageway - 0.5 * Rules.PedestrianWidthCm - Rules.RoadEdgeMarginCm;
+			WalkHeight = 0.0;
+			if (WalkLateral - 0.5 * Rules.PedestrianWidthCm < OuterLaneCenter + 0.5 * Rules.VehicleWidthCm + Rules.PedestrianSideClearanceCm)
+			{
+				continue;
+			}
+		}
+
+		for (int32 Direction = 0; Direction < 2; ++Direction)
+		{
+			const bool bForward = (Direction == 0);
+
+			FChronoLane Lane;
+			Lane.Id = Lanes.Num();
+			Lane.Kind = EChronoLaneKind::Pedestrian;
+			Lane.SegmentId = SegmentId;
+			Lane.bForward = bForward;
+			Lane.FromNodeId = bForward ? Segment.StartNodeId : Segment.EndNodeId;
+			Lane.ToNodeId = bForward ? Segment.EndNodeId : Segment.StartNodeId;
+			Lane.SpeedLimitCmPerS = Rules.PedestrianMaxSpeedCmPerS;
+			Lane.SegmentStartDistance = Samples[0].Distance;
+			Lane.SegmentEndDistance = Samples.Last().Distance;
+
+			const double Lateral = WalkLateral * (bForward ? KeepSide : -KeepSide);
+			Lane.Points.Reserve(Samples.Num());
+			for (int32 Index = 0; Index < Samples.Num(); ++Index)
+			{
+				const FChronoRoadSample& Sample = Samples[bForward ? Index : Samples.Num() - 1 - Index];
+				const FVector2D Side(-Sample.Tangent.Y, Sample.Tangent.X);
+				const FVector2D Position = Sample.Position + Side * Lateral;
+				Lane.Points.Add(FVector(Position.X, Position.Y, Graph.GetSegmentHeightAtDistance(Segment, Sample.Distance) + WalkHeight));
+			}
+			Lane.Length = MeasurePolyline(Lane.Points, Lane.Distances);
+
+			LanesBySegment.FindOrAdd(SegmentId).Add(Lane.Id);
+			Lanes.Add(MoveTemp(Lane));
+		}
 	}
 
 	// ---- Connectors, node by node ----
@@ -325,8 +442,17 @@ void FChronoLaneGraph::Build(const FChronoRoadGraph& Graph, const FChronoTraffic
 		{
 			for (const int32 OutLaneId : *Out)
 			{
-				// Turning back onto the road one came from is only allowed at a dead end.
-				if (Lanes[InLaneId].SegmentId == Lanes[OutLaneId].SegmentId && !bDeadEnd)
+				// Vehicles stay on the carriageway, pedestrians on the sidewalks.
+				const bool bPedestrian = Lanes[InLaneId].Kind == EChronoLaneKind::Pedestrian;
+				if (Lanes[InLaneId].Kind != Lanes[OutLaneId].Kind)
+				{
+					continue;
+				}
+
+				// A vehicle only turns back onto the road it came from at a
+				// dead end. A pedestrian may at any junction: that is how the
+				// street is crossed to reach the other sidewalk.
+				if (Lanes[InLaneId].SegmentId == Lanes[OutLaneId].SegmentId && !bDeadEnd && !bPedestrian)
 				{
 					continue;
 				}
@@ -348,7 +474,9 @@ void FChronoLaneGraph::Build(const FChronoRoadGraph& Graph, const FChronoTraffic
 				const FVector2D SD(StartDirection.X, StartDirection.Y);
 				const FVector2D ED(EndDirection.X, EndDirection.Y);
 				const double Denominator = Cross2D(SD, ED);
-				if (FMath::Abs(Denominator) > 0.2)
+
+				// Pedestrians walk straight across; vehicles follow a curve.
+				if (!bPedestrian && FMath::Abs(Denominator) > 0.2)
 				{
 					const double AlongStart = Cross2D(E2 - S2, ED) / Denominator;
 					const double BeforeEnd = Cross2D(E2 - S2, SD) / Denominator;
@@ -364,11 +492,19 @@ void FChronoLaneGraph::Build(const FChronoRoadGraph& Graph, const FChronoTraffic
 				Connector.NodeId = NodeId;
 				Connector.FromLaneId = InLaneId;
 				Connector.ToLaneId = OutLaneId;
-				for (int32 Piece = 0; Piece <= ConnectorPieces; ++Piece)
+				if (bPedestrian)
 				{
-					const double T = static_cast<double>(Piece) / ConnectorPieces;
-					const double U = 1.0 - T;
-					Connector.Points.Add(Start * (U * U) + Control * (2.0 * U * T) + End * (T * T));
+					BuildWalkPath(Start, End, SD, Node.Position.Z, InLane.SegmentId == OutLane.SegmentId, bDeadEnd,
+						Graph.GetSegments().FindChecked(InLane.SegmentId).Profile.CarriagewayWidthCm, Rules, Connector.Points);
+				}
+				else
+				{
+					for (int32 Piece = 0; Piece <= ConnectorPieces; ++Piece)
+					{
+						const double T = static_cast<double>(Piece) / ConnectorPieces;
+						const double U = 1.0 - T;
+						Connector.Points.Add(Start * (U * U) + Control * (2.0 * U * T) + End * (T * T));
+					}
 				}
 				Connector.Length = MeasurePolyline(Connector.Points, Connector.Distances);
 
@@ -389,8 +525,13 @@ void FChronoLaneGraph::Build(const FChronoRoadGraph& Graph, const FChronoTraffic
 					continue;
 				}
 
+				// Two walkers need less room between them than anything involving a vehicle.
+				const bool bBothPedestrian = Lanes[Connectors[A].FromLaneId].Kind == EChronoLaneKind::Pedestrian
+					&& Lanes[Connectors[B].FromLaneId].Kind == EChronoLaneKind::Pedestrian;
+				const double Clearance = bBothPedestrian ? Rules.PedestrianClearanceCm : Rules.ConflictClearanceCm;
+
 				if (Connectors[A].ToLaneId == Connectors[B].ToLaneId
-					|| DistancePolylineToPolyline2D(Connectors[A].Points, Connectors[B].Points) < Rules.ConflictClearanceCm)
+					|| DistancePolylineToPolyline2D(Connectors[A].Points, Connectors[B].Points) < Clearance)
 				{
 					Connectors[A].Conflicts.Add(B);
 					Connectors[B].Conflicts.Add(A);
@@ -400,7 +541,7 @@ void FChronoLaneGraph::Build(const FChronoRoadGraph& Graph, const FChronoTraffic
 	}
 }
 
-int32 FChronoLaneGraph::FindLaneOnSide(int32 SegmentId, int32 Side) const
+int32 FChronoLaneGraph::FindLaneOnSide(int32 SegmentId, int32 Side, EChronoLaneKind Kind) const
 {
 	// With right-hand traffic the lanes that follow the segment run along
 	// its positive side; with left-hand traffic, along its negative side.
@@ -411,6 +552,10 @@ int32 FChronoLaneGraph::FindLaneOnSide(int32 SegmentId, int32 Side) const
 	for (const int32 LaneId : GetSegmentLanes(SegmentId))
 	{
 		const FChronoLane& Lane = Lanes[LaneId];
+		if (Lane.Kind != Kind)
+		{
+			continue;
+		}
 		if (Lane.bForward == bWantForward)
 		{
 			// The outermost lane of that direction is the one along the kerb.
@@ -556,6 +701,7 @@ bool FChronoLaneGraph::FindRoute(int32 FromLaneId, double FromDistance, int32 To
 		const FChronoLane& Lane = Lanes[Entry.LaneId];
 		const double Speed = LaneSpeed(Entry.LaneId);
 
+		// Connectors never change kind, so every lane reached is of the kind the trip started on.
 		if (Lane.SegmentId == ToSegmentId)
 		{
 			const double Total = Entry.Cost + SegmentToLaneDistance(Entry.LaneId, ToSegmentDistance) / Speed;

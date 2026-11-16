@@ -18,8 +18,11 @@ struct CHRONOTRAFFIC_API FChronoCommuteRules
 	float EveningStart = 0.65f;
 	float EveningEnd = 0.80f;
 
-	/** Share of the commuters who drive as visible vehicles. */
+	/** Share of the commuters who travel as visible agents. */
 	float SampleRate = 1.0f;
+
+	/** A commute between two buildings closer than this, as the crow flies, is walked. */
+	float WalkDistanceCm = 30000.0f;
 
 	// Happiness.
 	float ComfortableCommuteSeconds = 60.0f;

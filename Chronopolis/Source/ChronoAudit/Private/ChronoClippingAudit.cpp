@@ -476,10 +476,12 @@ int32 ChronoClippingAudit::RunBuildings(const FChronoHeightfield& Heightfield, c
 
 int32 ChronoClippingAudit::RunTraffic(const FChronoTrafficSim& Traffic, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues)
 {
-	// The simulation checks its own contract: nobody inside the vehicle
-	// ahead, no two conflicting paths of a junction in use at once.
+	// The simulation checks its own contract (nobody inside the vehicle
+	// ahead, no two conflicting paths of a junction in use at once), then
+	// the footprints of vehicles and pedestrians are tested against each
+	// other, whatever lane they are on.
 	FString Error;
-	if (Traffic.CheckInvariants(Error) || OutIssues.Num() >= Settings.MaxIssues)
+	if (OutIssues.Num() >= Settings.MaxIssues || (Traffic.CheckInvariants(Error) && Traffic.CheckNoOverlap(Settings.OverlapToleranceCm, Error)))
 	{
 		return 0;
 	}

@@ -1,5 +1,7 @@
 #include "ChronoTrafficSim.h"
 
+#include "ChronoGeometry2D.h"
+
 namespace ChronoTrafficSimPrivate
 {
 	// "No obstacle ahead": far enough that it has no effect on speed.
@@ -48,6 +50,7 @@ void FChronoTrafficSim::SetNetwork(const FChronoRoadGraph& Graph, const FChronoT
 	ConnectorVehicles.SetNum(LaneGraph.GetConnectors().Num());
 	ConnectorHolders.Init(0, LaneGraph.GetConnectors().Num());
 	LaneIncoming.Init(0, LaneGraph.GetLanes().Num());
+	LaneLeavers.Init(INDEX_NONE, LaneGraph.GetLanes().Num());
 
 	LaneSpeeds.Reset();
 	for (const FChronoLane& Lane : LaneGraph.GetLanes())
@@ -136,11 +139,31 @@ double FChronoTrafficSim::GetLastRearOnLane(int32 LaneId, float& OutSpeed) const
 	return Last.Distance - Last.Length;
 }
 
+double FChronoTrafficSim::GetLeavingRearOnLane(int32 LaneId, float& OutSpeed) const
+{
+	const int32 Leaver = LaneLeavers[LaneId];
+	if (Vehicles.IsValidIndex(Leaver))
+	{
+		// Still the case only while it is in the junction, coming from this
+		// lane, and not yet a full length into it.
+		const FChronoVehicle& Vehicle = Vehicles[Leaver];
+		if (Vehicle.bActive && Vehicle.bOnConnector && Vehicle.Route[Vehicle.RouteIndex] == LaneId && Vehicle.Distance < Vehicle.Length)
+		{
+			OutSpeed = Vehicle.Speed;
+			return LaneGraph.GetLanes()[LaneId].Length + Vehicle.Distance - Vehicle.Length;
+		}
+	}
+
+	OutSpeed = 0.0f;
+	return ChronoTrafficSimPrivate::FreeGapCm;
+}
+
 bool FChronoTrafficSim::TrySpawn(const FChronoTripRequest& Request, float WaitedSeconds, const FChronoTrafficRules& Rules, bool& bOutNoRoute)
 {
 	bOutNoRoute = false;
 
-	const int32 LaneId = LaneGraph.FindLaneOnSide(Request.FromSegmentId, Request.FromSide);
+	const EChronoLaneKind Kind = Request.bWalk ? EChronoLaneKind::Pedestrian : EChronoLaneKind::Vehicle;
+	const int32 LaneId = LaneGraph.FindLaneOnSide(Request.FromSegmentId, Request.FromSide, Kind);
 	if (LaneId == INDEX_NONE)
 	{
 		bOutNoRoute = true;
@@ -148,15 +171,18 @@ bool FChronoTrafficSim::TrySpawn(const FChronoTripRequest& Request, float Waited
 	}
 
 	const FChronoLane& Lane = LaneGraph.GetLanes()[LaneId];
-	const float Length = Rules.VehicleLengthCm;
+	const float Length = Request.bWalk ? Rules.PedestrianLengthCm : Rules.VehicleLengthCm;
+	const float MinGap = Request.bWalk ? Rules.PedestrianMinGapCm : Rules.MinGapCm;
+	const float TimeHeadway = Request.bWalk ? Rules.PedestrianTimeHeadwaySeconds : Rules.TimeHeadwaySeconds;
 
-	// The whole vehicle must be on the lane, not sticking out into a junction.
-	if (Lane.Length < Length + Rules.StopMarginCm)
+	// The whole vehicle must be on the lane, and the stop margin away from
+	// the junction at either end: pedestrians cross right along those lines.
+	if (Lane.Length < Length + 2.0 * Rules.StopMarginCm)
 	{
 		bOutNoRoute = true;
 		return false;
 	}
-	const double StartDistance = FMath::Clamp(LaneGraph.SegmentToLaneDistance(LaneId, Request.FromSegmentDistance), static_cast<double>(Length), Lane.Length - Rules.StopMarginCm);
+	const double StartDistance = FMath::Clamp(LaneGraph.SegmentToLaneDistance(LaneId, Request.FromSegmentDistance), static_cast<double>(Length) + Rules.StopMarginCm, Lane.Length - Rules.StopMarginCm);
 
 	TArray<int32> Route;
 	double TargetDistance = 0.0;
@@ -177,7 +203,17 @@ bool FChronoTrafficSim::TrySpawn(const FChronoTripRequest& Request, float Waited
 	if (InsertAt > 0)
 	{
 		const FChronoVehicle& Ahead = Vehicles[OnLane[InsertAt - 1]];
-		if ((Ahead.Distance - Ahead.Length) - StartDistance < Rules.MinGapCm)
+		if ((Ahead.Distance - Ahead.Length) - StartDistance < MinGap)
+		{
+			return false;
+		}
+	}
+	else
+	{
+		// First on the lane, but a vehicle entering the junction ahead may
+		// still have its tail here.
+		float LeavingSpeed = 0.0f;
+		if (GetLeavingRearOnLane(LaneId, LeavingSpeed) - StartDistance < MinGap)
 		{
 			return false;
 		}
@@ -185,12 +221,12 @@ bool FChronoTrafficSim::TrySpawn(const FChronoTripRequest& Request, float Waited
 	if (InsertAt < OnLane.Num())
 	{
 		const FChronoVehicle& Behind = Vehicles[OnLane[InsertAt]];
-		if ((StartDistance - Length) - Behind.Distance < Rules.MinGapCm + Behind.Speed * Rules.TimeHeadwaySeconds)
+		if ((StartDistance - Length) - Behind.Distance < MinGap + Behind.Speed * FMath::Max(TimeHeadway, Behind.TimeHeadway))
 		{
 			return false;
 		}
 	}
-	else if (LaneIncoming[LaneId] > 0 && StartDistance - Length < (LaneIncoming[LaneId] + 1) * (Length + Rules.MinGapCm))
+	else if (LaneIncoming[LaneId] > 0 && StartDistance - Length < (LaneIncoming[LaneId] + 1) * (Length + MinGap))
 	{
 		// Vehicles are about to enter this lane from the junction behind.
 		return false;
@@ -214,9 +250,20 @@ bool FChronoTrafficSim::TrySpawn(const FChronoTripRequest& Request, float Waited
 	Vehicle.UserId = Request.UserId;
 	Vehicle.Route = MoveTemp(Route);
 	Vehicle.Distance = StartDistance;
+	Vehicle.bPedestrian = Request.bWalk;
 	Vehicle.Length = Length;
-	Vehicle.TargetDistance = TargetDistance;
+	Vehicle.Width = Request.bWalk ? Rules.PedestrianWidthCm : Rules.VehicleWidthCm;
+	Vehicle.MaxSpeed = Request.bWalk ? Rules.PedestrianMaxSpeedCmPerS : Rules.VehicleMaxSpeedCmPerS;
+	Vehicle.MaxAcceleration = Request.bWalk ? Rules.PedestrianAccelerationCmPerS2 : Rules.MaxAccelerationCmPerS2;
+	Vehicle.ComfortDeceleration = Request.bWalk ? Rules.PedestrianDecelerationCmPerS2 : Rules.ComfortDecelerationCmPerS2;
+	Vehicle.MinGap = MinGap;
+	Vehicle.TimeHeadway = TimeHeadway;
 	Vehicle.TripSeconds = WaitedSeconds;
+
+	// The destination is a place to stop at: like any stopped vehicle, not
+	// closer to the junction ahead than the stop margin.
+	const FChronoLane& LastLane = LaneGraph.GetLanes()[Vehicle.Route.Last()];
+	Vehicle.TargetDistance = FMath::Min(TargetDistance, FMath::Max(LastLane.Length - Rules.StopMarginCm, 0.0));
 
 	// A destination on the starting lane must lie ahead of the vehicle.
 	if (Vehicle.Route.Num() == 1)
@@ -249,7 +296,7 @@ bool FChronoTrafficSim::TryReserve(int32 VehicleIndex, int32 ConnectorId, const 
 	// already promised the same lane are counted as if they were on it.
 	const FChronoVehicle& Vehicle = Vehicles[VehicleIndex];
 	const FChronoLane& ExitLane = LaneGraph.GetLanes()[Connector.ToLaneId];
-	const double Needed = (LaneIncoming[Connector.ToLaneId] + 1) * (static_cast<double>(Vehicle.Length) + Rules.MinGapCm);
+	const double Needed = (LaneIncoming[Connector.ToLaneId] + 1) * (static_cast<double>(Vehicle.Length) + Vehicle.MinGap);
 
 	float LastSpeed = 0.0f;
 	const double LastRear = GetLastRearOnLane(Connector.ToLaneId, LastSpeed);
@@ -296,9 +343,10 @@ void FChronoTrafficSim::ComputeLead(int32 VehicleIndex, const FChronoTrafficRule
 	// its standstill gap from what it follows, so the line is presented to it
 	// as an obstacle standing that gap beyond: the vehicle then stops on the
 	// line. The hard limit is the line itself.
-	auto StopAtLine = [&OutGap, &OutLeadSpeed, &OutMaxAdvance, &Rules](double DistanceToLine)
+	const double OwnMinGap = Vehicle.MinGap;
+	auto StopAtLine = [&OutGap, &OutLeadSpeed, &OutMaxAdvance, OwnMinGap](double DistanceToLine)
 	{
-		const double Gap = FMath::Max(DistanceToLine, 0.0) + Rules.MinGapCm;
+		const double Gap = FMath::Max(DistanceToLine, 0.0) + OwnMinGap;
 		if (Gap < OutGap)
 		{
 			OutGap = Gap;
@@ -310,7 +358,7 @@ void FChronoTrafficSim::ComputeLead(int32 VehicleIndex, const FChronoTrafficRule
 	if (Vehicle.bOnConnector)
 	{
 		const FChronoLaneConnector& Connector = LaneGraph.GetConnectors()[Vehicle.ConnectorId];
-		OutDesiredSpeed = FMath::Min(Rules.TurnSpeedCmPerS, Rules.VehicleMaxSpeedCmPerS);
+		OutDesiredSpeed = FMath::Min(Rules.TurnSpeedCmPerS, Vehicle.MaxSpeed);
 
 		const TArray<int32>& OnConnector = ConnectorVehicles[Vehicle.ConnectorId];
 		const int32 Position = OnConnector.Find(VehicleIndex);
@@ -334,7 +382,7 @@ void FChronoTrafficSim::ComputeLead(int32 VehicleIndex, const FChronoTrafficRule
 
 	const int32 LaneId = Vehicle.Route[Vehicle.RouteIndex];
 	const FChronoLane& Lane = LaneGraph.GetLanes()[LaneId];
-	OutDesiredSpeed = FMath::Min(Lane.SpeedLimitCmPerS, Rules.VehicleMaxSpeedCmPerS);
+	OutDesiredSpeed = FMath::Min(Lane.SpeedLimitCmPerS, Vehicle.MaxSpeed);
 
 	const TArray<int32>& OnLane = LaneVehicles[LaneId];
 	const int32 Position = OnLane.Find(VehicleIndex);
@@ -343,6 +391,17 @@ void FChronoTrafficSim::ComputeLead(int32 VehicleIndex, const FChronoTrafficRule
 	{
 		const FChronoVehicle& Ahead = Vehicles[OnLane[Position - 1]];
 		FollowVehicle((Ahead.Distance - Ahead.Length) - Vehicle.Distance, Ahead.Speed);
+	}
+	else
+	{
+		// First on the lane: the vehicle that just entered the junction
+		// ahead may still have its tail on this lane.
+		float LeavingSpeed = 0.0f;
+		const double LeavingRear = GetLeavingRearOnLane(LaneId, LeavingSpeed);
+		if (LeavingRear < FreeGapCm)
+		{
+			FollowVehicle(LeavingRear - Vehicle.Distance, LeavingSpeed);
+		}
 	}
 
 	const bool bLastLane = (Vehicle.RouteIndex == Vehicle.Route.Num() - 1);
@@ -358,8 +417,8 @@ void FChronoTrafficSim::ComputeLead(int32 VehicleIndex, const FChronoTrafficRule
 
 	// Slow down to turning speed on the approach.
 	const float TurnSpeed = FMath::Min(Rules.TurnSpeedCmPerS, OutDesiredSpeed);
-	const double BrakingDistance = (static_cast<double>(Vehicle.Speed) * Vehicle.Speed - static_cast<double>(TurnSpeed) * TurnSpeed) / (2.0 * FMath::Max(Rules.ComfortDecelerationCmPerS2, 1.0f));
-	if (ToLaneEnd <= FMath::Max(BrakingDistance, 0.0) + Rules.MinGapCm)
+	const double BrakingDistance = (static_cast<double>(Vehicle.Speed) * Vehicle.Speed - static_cast<double>(TurnSpeed) * TurnSpeed) / (2.0 * FMath::Max(Vehicle.ComfortDeceleration, 1.0f));
+	if (ToLaneEnd <= FMath::Max(BrakingDistance, 0.0) + OwnMinGap)
 	{
 		OutDesiredSpeed = TurnSpeed;
 	}
@@ -446,8 +505,6 @@ void FChronoTrafficSim::Step(float DeltaSeconds, const FChronoTrafficRules& Rule
 	TArray<double> MaxAdvance;
 	MaxAdvance.Init(0.0, Vehicles.Num());
 
-	const double MaxAcceleration = FMath::Max(Rules.MaxAccelerationCmPerS2, 1.0f);
-	const double ComfortDeceleration = FMath::Max(Rules.ComfortDecelerationCmPerS2, 1.0f);
 
 	for (int32 VehicleIndex = 0; VehicleIndex < Vehicles.Num(); ++VehicleIndex)
 	{
@@ -463,13 +520,16 @@ void FChronoTrafficSim::Step(float DeltaSeconds, const FChronoTrafficRules& Rule
 		ComputeLead(VehicleIndex, Rules, Gap, LeadSpeed, DesiredSpeed, Limit);
 
 		FChronoVehicle& Vehicle = Vehicles[VehicleIndex];
+		const double MaxAcceleration = FMath::Max(Vehicle.MaxAcceleration, 1.0f);
+		const double ComfortDeceleration = FMath::Max(Vehicle.ComfortDeceleration, 1.0f);
 
 		// Intelligent Driver Model: accelerate toward the desired speed,
-		// brake according to the gap and the closing speed.
+		// brake according to the gap and the closing speed. Walkers follow
+		// the same law with their own, much gentler, numbers.
 		const double Speed = Vehicle.Speed;
 		const double Desired = FMath::Max(DesiredSpeed, 1.0f);
 		const double Closing = Speed - LeadSpeed;
-		const double WantedGap = Rules.MinGapCm + FMath::Max(0.0, Speed * Rules.TimeHeadwaySeconds + Speed * Closing / (2.0 * FMath::Sqrt(MaxAcceleration * ComfortDeceleration)));
+		const double WantedGap = Vehicle.MinGap + FMath::Max(0.0, Speed * Vehicle.TimeHeadway + Speed * Closing / (2.0 * FMath::Sqrt(MaxAcceleration * ComfortDeceleration)));
 		const double SafeGap = FMath::Max(Gap, 1.0);
 		double Acceleration = MaxAcceleration * (1.0 - FMath::Pow(Speed / Desired, 4.0) - (WantedGap / SafeGap) * (WantedGap / SafeGap));
 
@@ -483,6 +543,7 @@ void FChronoTrafficSim::Step(float DeltaSeconds, const FChronoTrafficRules& Rule
 	// ---- 3. Movement ----
 	double SpeedSum = 0.0;
 	int32 SpeedCount = 0;
+	int32 NumPedestrians = 0;
 
 	for (int32 VehicleIndex = 0; VehicleIndex < Vehicles.Num(); ++VehicleIndex)
 	{
@@ -502,8 +563,16 @@ void FChronoTrafficSim::Step(float DeltaSeconds, const FChronoTrafficRules& Rule
 		Vehicle.TripSeconds += DeltaSeconds;
 		Vehicle.StoppedSeconds = (Vehicle.Speed < StoppedSpeedCmPerS) ? Vehicle.StoppedSeconds + DeltaSeconds : 0.0f;
 
-		SpeedSum += Vehicle.Speed;
-		++SpeedCount;
+		// The average speed is about vehicles: walkers would only drag it down.
+		if (Vehicle.bPedestrian)
+		{
+			++NumPedestrians;
+		}
+		else
+		{
+			SpeedSum += Vehicle.Speed;
+			++SpeedCount;
+		}
 
 		if (Vehicle.bOnConnector)
 		{
@@ -524,8 +593,9 @@ void FChronoTrafficSim::Step(float DeltaSeconds, const FChronoTrafficRules& Rule
 			const int32 LaneId = Vehicle.Route[Vehicle.RouteIndex];
 			const FChronoLane& Lane = LaneGraph.GetLanes()[LaneId];
 
-			// The rear has left the junction behind: its path is free again.
-			if (Vehicle.ClearingConnectorId != INDEX_NONE && Vehicle.Distance >= Vehicle.Length)
+			// The rear has left the junction behind, by the same margin as
+			// vehicles keep before a stop line: its path is free again.
+			if (Vehicle.ClearingConnectorId != INDEX_NONE && Vehicle.Distance >= Vehicle.Length + Rules.StopMarginCm)
 			{
 				ReleaseConnector(Vehicle.ClearingConnectorId);
 			}
@@ -546,6 +616,7 @@ void FChronoTrafficSim::Step(float DeltaSeconds, const FChronoTrafficRules& Rule
 				LaneVehicles[LaneId].Remove(VehicleIndex);
 				ReleaseConnector(Vehicle.ClearingConnectorId);
 
+				LaneLeavers[LaneId] = VehicleIndex;
 				Vehicle.Distance -= Lane.Length;
 				Vehicle.bOnConnector = true;
 				Vehicle.ConnectorId = Vehicle.ReservedConnectorId;
@@ -579,6 +650,7 @@ void FChronoTrafficSim::Step(float DeltaSeconds, const FChronoTrafficRules& Rule
 	}
 
 	Stats.ActiveVehicles = Vehicles.Num() - FreeVehicles.Num();
+	Stats.ActivePedestrians = NumPedestrians;
 	Stats.WaitingTrips = PendingTrips.Num();
 	Stats.AverageSpeedCmPerS = SpeedCount > 0 ? static_cast<float>(SpeedSum / SpeedCount) : 0.0f;
 }
@@ -590,42 +662,55 @@ bool FChronoTrafficSim::GetVehicleTransform(int32 VehicleIndex, FVector& OutPosi
 		return false;
 	}
 
-	// The middle of the vehicle is half a length behind its front.
 	const FChronoVehicle& Vehicle = Vehicles[VehicleIndex];
-	const double Middle = Vehicle.Distance - 0.5 * Vehicle.Length;
 
-	if (Vehicle.bOnConnector)
+	// A point of the vehicle, given as a distance along the lane or connector
+	// its front is on. Behind the start of that one, the point is still on
+	// the one the vehicle is leaving.
+	auto SampleAt = [this, &Vehicle](double Distance, FVector& Position, FVector& Direction)
 	{
-		if (Middle >= 0.0)
+		const int32 LaneId = Vehicle.Route[Vehicle.RouteIndex];
+		if (Vehicle.bOnConnector)
 		{
-			LaneGraph.SampleConnector(Vehicle.ConnectorId, Middle, OutPosition, OutDirection);
+			if (Distance >= 0.0)
+			{
+				LaneGraph.SampleConnector(Vehicle.ConnectorId, Distance, Position, Direction);
+			}
+			else
+			{
+				LaneGraph.SampleLane(LaneId, LaneGraph.GetLanes()[LaneId].Length + Distance, Position, Direction);
+			}
+			return;
 		}
-		else
-		{
-			// The middle is still on the lane the vehicle is leaving.
-			const int32 LaneId = Vehicle.Route[Vehicle.RouteIndex];
-			LaneGraph.SampleLane(LaneId, LaneGraph.GetLanes()[LaneId].Length + Middle, OutPosition, OutDirection);
-		}
-		return true;
-	}
 
-	const int32 LaneId = Vehicle.Route[Vehicle.RouteIndex];
-	if (Middle >= 0.0 || Vehicle.RouteIndex == 0)
-	{
-		LaneGraph.SampleLane(LaneId, FMath::Max(Middle, 0.0), OutPosition, OutDirection);
-	}
-	else
-	{
-		// The middle is still in the junction the vehicle is leaving.
-		const int32 ConnectorId = LaneGraph.FindConnector(Vehicle.Route[Vehicle.RouteIndex - 1], LaneId);
+		const int32 ConnectorId = (Distance < 0.0 && Vehicle.RouteIndex > 0) ? LaneGraph.FindConnector(Vehicle.Route[Vehicle.RouteIndex - 1], LaneId) : INDEX_NONE;
 		if (ConnectorId != INDEX_NONE)
 		{
-			LaneGraph.SampleConnector(ConnectorId, LaneGraph.GetConnectors()[ConnectorId].Length + Middle, OutPosition, OutDirection);
+			LaneGraph.SampleConnector(ConnectorId, LaneGraph.GetConnectors()[ConnectorId].Length + Distance, Position, Direction);
 		}
 		else
 		{
-			LaneGraph.SampleLane(LaneId, 0.0, OutPosition, OutDirection);
+			LaneGraph.SampleLane(LaneId, FMath::Max(Distance, 0.0), Position, Direction);
 		}
+	};
+
+	// The middle of the vehicle is half a length behind its front.
+	SampleAt(Vehicle.Distance - 0.5 * Vehicle.Length, OutPosition, OutDirection);
+
+	if (Vehicle.bPedestrian)
+	{
+		// A walker stands on the highest surface under it, so that stepping
+		// on or off a sidewalk never puts its feet inside the curb, and
+		// stays upright whatever the slope.
+		FVector Position;
+		FVector Direction;
+		SampleAt(Vehicle.Distance, Position, Direction);
+		OutPosition.Z = FMath::Max(OutPosition.Z, Position.Z);
+		SampleAt(Vehicle.Distance - Vehicle.Length, Position, Direction);
+		OutPosition.Z = FMath::Max(OutPosition.Z, Position.Z);
+
+		const FVector Flat(OutDirection.X, OutDirection.Y, 0.0);
+		OutDirection = Flat.SizeSquared() > 1.0e-6 ? Flat.GetSafeNormal() : FVector(1.0, 0.0, 0.0);
 	}
 	return true;
 }
@@ -725,6 +810,76 @@ bool FChronoTrafficSim::CheckInvariants(FString& OutError) const
 				{
 					OutError = FString::Printf(TEXT("Conflicting paths %d and %d of node %d are in use at the same time"), ConnectorId, ConflictId, LaneGraph.GetConnectors()[ConnectorId].NodeId);
 					return false;
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+bool FChronoTrafficSim::CheckNoOverlap(double ToleranceCm, FString& OutError) const
+{
+	// Footprint of every agent, then a grid so that only neighbors are compared.
+	struct FAgentBox
+	{
+		int32 VehicleIndex = INDEX_NONE;
+		FChronoOrientedBox2D Box;
+	};
+
+	TArray<FAgentBox> Boxes;
+	double LargestCm = 100.0;
+	for (int32 VehicleIndex = 0; VehicleIndex < Vehicles.Num(); ++VehicleIndex)
+	{
+		FVector Position;
+		FVector Direction;
+		if (!GetVehicleTransform(VehicleIndex, Position, Direction))
+		{
+			continue;
+		}
+
+		const FChronoVehicle& Vehicle = Vehicles[VehicleIndex];
+		FAgentBox& Agent = Boxes.AddDefaulted_GetRef();
+		Agent.VehicleIndex = VehicleIndex;
+		Agent.Box = FChronoOrientedBox2D(FVector2D(Position.X, Position.Y), FVector2D(0.5 * Vehicle.Length, 0.5 * Vehicle.Width), FMath::Atan2(Direction.Y, Direction.X));
+		LargestCm = FMath::Max(LargestCm, static_cast<double>(FMath::Max(Vehicle.Length, Vehicle.Width)));
+	}
+
+	// Two boxes that overlap have centers closer than the largest diagonal,
+	// so they are in the same cell or in adjacent ones.
+	const double CellCm = 1.5 * LargestCm;
+	TMap<FIntPoint, TArray<int32>> Cells;
+	for (int32 Index = 0; Index < Boxes.Num(); ++Index)
+	{
+		const FVector2D& Center = Boxes[Index].Box.Center;
+		Cells.FindOrAdd(FIntPoint(FMath::FloorToInt32(Center.X / CellCm), FMath::FloorToInt32(Center.Y / CellCm))).Add(Index);
+	}
+
+	for (int32 Index = 0; Index < Boxes.Num(); ++Index)
+	{
+		const FVector2D& Center = Boxes[Index].Box.Center;
+		const FIntPoint Cell(FMath::FloorToInt32(Center.X / CellCm), FMath::FloorToInt32(Center.Y / CellCm));
+		for (int32 OffsetY = -1; OffsetY <= 1; ++OffsetY)
+		{
+			for (int32 OffsetX = -1; OffsetX <= 1; ++OffsetX)
+			{
+				const TArray<int32>* Others = Cells.Find(FIntPoint(Cell.X + OffsetX, Cell.Y + OffsetY));
+				if (!Others)
+				{
+					continue;
+				}
+				for (const int32 Other : *Others)
+				{
+					if (Other > Index && FChronoOrientedBox2D::Overlap(Boxes[Index].Box, Boxes[Other].Box, ToleranceCm))
+					{
+						const FChronoVehicle& A = Vehicles[Boxes[Index].VehicleIndex];
+						const FChronoVehicle& B = Vehicles[Boxes[Other].VehicleIndex];
+						OutError = FString::Printf(TEXT("%s %d overlaps %s %d at (%.0f, %.0f)"),
+							A.bPedestrian ? TEXT("Pedestrian") : TEXT("Vehicle"), Boxes[Index].VehicleIndex,
+							B.bPedestrian ? TEXT("pedestrian") : TEXT("vehicle"), Boxes[Other].VehicleIndex,
+							Center.X, Center.Y);
+						return false;
+					}
 				}
 			}
 		}

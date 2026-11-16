@@ -69,6 +69,9 @@ namespace ChronoTrafficTests
 		}
 	};
 
+	/** Footprints of vehicles and pedestrians may not overlap by more than this (numerical noise). */
+	const double OverlapToleranceCm = 1.0;
+
 	/** Runs the simulation, checking the zero-clipping contract after every step. Returns the first error. */
 	FString RunChecked(FChronoTrafficSim& Sim, const FChronoTrafficRules& Rules, float Seconds, TArray<FChronoTripArrival>& OutArrivals, bool bStopWhenIdle)
 	{
@@ -78,7 +81,7 @@ namespace ChronoTrafficTests
 		{
 			Sim.Step(Step, Rules);
 			OutArrivals.Append(Sim.TakeArrivals());
-			if (!Sim.CheckInvariants(Error))
+			if (!Sim.CheckInvariants(Error) || !Sim.CheckNoOverlap(OverlapToleranceCm, Error))
 			{
 				return FString::Printf(TEXT("At %.1f s: %s"), Time, *Error);
 			}
@@ -105,12 +108,24 @@ bool FChronoLaneGraphTest::RunTest(const FString& Parameters)
 
 	FChronoLaneGraph Lanes;
 	Lanes.Build(Roads.Graph, Roads.TrafficRules);
-	TestEqual(TEXT("Two lanes per segment"), Lanes.GetLanes().Num(), 8);
+	int32 NumVehicleLanes = 0;
+	int32 NumWalkLanes = 0;
+	for (const FChronoLane& Lane : Lanes.GetLanes())
+	{
+		++(Lane.Kind == EChronoLaneKind::Vehicle ? NumVehicleLanes : NumWalkLanes);
+	}
+	TestEqual(TEXT("Two traffic lanes per segment"), NumVehicleLanes, 8);
+	TestEqual(TEXT("Two sidewalks per segment"), NumWalkLanes, 8);
 
-	// At the crossroads each of the 4 arriving lanes can go 3 ways. Each of
-	// the 4 dead ends has one turn-back.
-	int32 NumAtCrossroads = 0;
-	int32 NumTurnBacks = 0;
+	// At the crossroads each of the 4 arriving traffic lanes can go 3 ways,
+	// and each of the 4 arriving sidewalks 4 ways: pedestrians may also cross
+	// the street they came by. Each of the 4 dead ends has one turn-back for
+	// vehicles and one for pedestrians.
+	int32 NumDriveAtCrossroads = 0;
+	int32 NumWalkAtCrossroads = 0;
+	int32 NumDriveTurnBacks = 0;
+	int32 NumWalkTurnBacks = 0;
+	bool bKindsNeverMix = true;
 	int32 CrossroadsNode = INDEX_NONE;
 	for (const TPair<int32, FChronoRoadNode>& Pair : Roads.Graph.GetNodes())
 	{
@@ -121,18 +136,44 @@ bool FChronoLaneGraphTest::RunTest(const FString& Parameters)
 	}
 	for (const FChronoLaneConnector& Connector : Lanes.GetConnectors())
 	{
+		const FChronoLane& From = Lanes.GetLanes()[Connector.FromLaneId];
+		const FChronoLane& To = Lanes.GetLanes()[Connector.ToLaneId];
+		const bool bWalk = From.Kind == EChronoLaneKind::Pedestrian;
+		bKindsNeverMix = bKindsNeverMix && From.Kind == To.Kind;
 		if (Connector.NodeId == CrossroadsNode)
 		{
-			++NumAtCrossroads;
+			++(bWalk ? NumWalkAtCrossroads : NumDriveAtCrossroads);
 		}
 		else
 		{
-			++NumTurnBacks;
-			TestTrue(TEXT("A turn-back returns on the same road"), Lanes.GetLanes()[Connector.FromLaneId].SegmentId == Lanes.GetLanes()[Connector.ToLaneId].SegmentId);
+			++(bWalk ? NumWalkTurnBacks : NumDriveTurnBacks);
+			TestTrue(TEXT("A turn-back returns on the same road"), From.SegmentId == To.SegmentId);
 		}
 	}
-	TestEqual(TEXT("Twelve paths through the crossroads"), NumAtCrossroads, 12);
-	TestEqual(TEXT("One turn-back per dead end"), NumTurnBacks, 4);
+	TestEqual(TEXT("Twelve ways to drive through the crossroads"), NumDriveAtCrossroads, 12);
+	TestEqual(TEXT("Sixteen ways to walk through the crossroads"), NumWalkAtCrossroads, 16);
+	TestEqual(TEXT("One turn-back per dead end for vehicles"), NumDriveTurnBacks, 4);
+	TestEqual(TEXT("One turn-back per dead end for pedestrians"), NumWalkTurnBacks, 4);
+	TestTrue(TEXT("No path leads from the carriageway to a sidewalk or back"), bKindsNeverMix);
+
+	// Sidewalk lanes stay off the carriageway: at least half of it, plus
+	// half a walker, away from the centerline of their road.
+	bool bWalkersOffTheCarriageway = true;
+	for (const FChronoLane& Lane : Lanes.GetLanes())
+	{
+		if (Lane.Kind != EChronoLaneKind::Pedestrian)
+		{
+			continue;
+		}
+		const FChronoRoadSegment* Segment = Roads.Graph.FindSegment(Lane.SegmentId);
+		for (const FVector& Point : Lane.Points)
+		{
+			double Distance = 0.0;
+			Segment->Curve.FindClosestParameter(FVector2D(Point.X, Point.Y), Distance);
+			bWalkersOffTheCarriageway = bWalkersOffTheCarriageway && Distance >= 0.5 * Segment->Profile.CarriagewayWidthCm + 0.5 * Roads.TrafficRules.PedestrianWidthCm;
+		}
+	}
+	TestTrue(TEXT("Sidewalk lanes never run on the carriageway"), bWalkersOffTheCarriageway);
 
 	// Lanes keep to the right: a lane's points are on the right of the centerline, seen in its direction of travel.
 	bool bAllOnTheRight = true;
@@ -180,6 +221,26 @@ bool FChronoLaneGraphTest::RunTest(const FString& Parameters)
 		}
 	}
 	TestTrue(TEXT("Some paths cross"), bSomeCrossing);
+
+	// Every way of walking across a street conflicts with at least one way
+	// of driving through: nobody crosses while a vehicle has that path.
+	bool bCrossingsAreGuarded = true;
+	for (const FChronoLaneConnector& Connector : Lanes.GetConnectors())
+	{
+		const FChronoLane& From = Lanes.GetLanes()[Connector.FromLaneId];
+		const FChronoLane& To = Lanes.GetLanes()[Connector.ToLaneId];
+		if (From.Kind != EChronoLaneKind::Pedestrian || Connector.NodeId != CrossroadsNode || Connector.Length < Roads.TrafficRules.VehicleWidthCm * 2.0)
+		{
+			continue;
+		}
+		bool bGuarded = false;
+		for (const int32 OtherId : Connector.Conflicts)
+		{
+			bGuarded = bGuarded || Lanes.GetLanes()[Lanes.GetConnectors()[OtherId].FromLaneId].Kind == EChronoLaneKind::Vehicle;
+		}
+		bCrossingsAreGuarded = bCrossingsAreGuarded && bGuarded;
+	}
+	TestTrue(TEXT("Crossing a street on foot excludes the traffic it crosses"), bCrossingsAreGuarded);
 	TestTrue(TEXT("Conflicts are mutual and local to one junction"), bConflictsAreMutual);
 	TestFalse(TEXT("Opposite straight paths are compatible"), bOppositeStraightsConflict);
 
@@ -318,7 +379,7 @@ bool FChronoTrafficJunctionTest::RunTest(const FString& Parameters)
 
 			Sim.Step(Step, Roads.TrafficRules);
 			OutArrivals.Append(Sim.TakeArrivals());
-			if (!Sim.CheckInvariants(Error))
+			if (!Sim.CheckInvariants(Error) || !Sim.CheckNoOverlap(ChronoTrafficTests::OverlapToleranceCm, Error))
 			{
 				Error = FString::Printf(TEXT("At %.1f s: %s"), Time, *Error);
 				break;
@@ -349,7 +410,9 @@ bool FChronoTrafficJunctionTest::RunTest(const FString& Parameters)
 	AddInfo(FString::Printf(TEXT("%d trips ended, %d driven, average %.0f s"), Arrivals.Num(), NumDrove, Stats.AverageTripSeconds));
 
 	TestEqual(TEXT("Every trip ends"), Arrivals.Num(), 400);
-	TestTrue(TEXT("Nearly every trip is driven to the end"), NumDrove >= 390);
+	// All-way stops have little capacity: at two departures a second a few
+	// trips wait past the timeout and are resolved without driving.
+	TestTrue(TEXT("Nearly every trip is driven to the end"), NumDrove >= 400 * 95 / 100);
 
 	// Light traffic flows freely: one departure every five seconds.
 	TArray<FChronoTripArrival> Light;
@@ -406,7 +469,121 @@ bool FChronoTrafficJunctionTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoCommuteTest, "Chronopolis.Traffic.Commute.CitizensDriveToWork",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoTrafficPedestrianTest, "Chronopolis.Traffic.Sim.PedestriansAndVehiclesShareJunctions",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter)
+
+bool FChronoTrafficPedestrianTest::RunTest(const FString& Parameters)
+{
+	// A street grid, vehicles and walkers between random places: walkers
+	// cross every street the vehicles drive on.
+	ChronoTrafficTests::FRoads Roads;
+	Roads.BuildGrid(4, 8000.0);
+
+	TArray<int32> SegmentIds;
+	Roads.Graph.GetSegments().GetKeys(SegmentIds);
+	SegmentIds.Sort();
+
+	FChronoTrafficSim Sim;
+	Sim.SetNetwork(Roads.Graph, Roads.TrafficRules);
+
+	const int32 NumTrips = 500;
+	FRandomStream Random(2024);
+	TArray<bool> bWalked;
+	const float Step = 0.1f;
+	int32 NumRequested = 0;
+	int32 MostWalkers = 0;
+	int32 MostAgents = 0;
+	FString Error;
+	TArray<FChronoTripArrival> Arrivals;
+
+	for (float Time = 0.0f; Time < 3600.0f; Time += Step)
+	{
+		while (NumRequested < NumTrips && NumRequested < Time * 3.0f)
+		{
+			const FChronoRoadSegment* From = Roads.Graph.FindSegment(SegmentIds[Random.RandRange(0, SegmentIds.Num() - 1)]);
+			const FChronoRoadSegment* To = Roads.Graph.FindSegment(SegmentIds[Random.RandRange(0, SegmentIds.Num() - 1)]);
+
+			FChronoTripRequest Trip;
+			Trip.FromSegmentId = From->Id;
+			Trip.FromSegmentDistance = Random.FRandRange(0.2f, 0.8f) * From->Length;
+			Trip.FromSide = Random.FRandRange(0.0f, 1.0f) < 0.5f ? 1 : -1;
+			Trip.ToSegmentId = To->Id;
+			Trip.ToSegmentDistance = Random.FRandRange(0.2f, 0.8f) * To->Length;
+			Trip.UserId = NumRequested;
+			Trip.bWalk = (NumRequested % 2) == 0;
+			bWalked.Add(Trip.bWalk);
+			Sim.RequestTrip(Trip);
+			++NumRequested;
+		}
+
+		Sim.Step(Step, Roads.TrafficRules);
+		Arrivals.Append(Sim.TakeArrivals());
+		MostWalkers = FMath::Max(MostWalkers, Sim.GetStats().ActivePedestrians);
+		MostAgents = FMath::Max(MostAgents, Sim.GetStats().ActiveVehicles);
+		if (!Sim.CheckInvariants(Error) || !Sim.CheckNoOverlap(ChronoTrafficTests::OverlapToleranceCm, Error))
+		{
+			AddError(FString::Printf(TEXT("At %.1f s: %s"), Time, *Error));
+			break;
+		}
+		if (NumRequested == NumTrips && Sim.GetStats().ActiveVehicles == 0 && Sim.GetStats().WaitingTrips == 0)
+		{
+			break;
+		}
+	}
+
+	int32 NumWalked = 0;
+	int32 NumDrove = 0;
+	float WalkSeconds = 0.0f;
+	float DriveSeconds = 0.0f;
+	for (const FChronoTripArrival& Arrival : Arrivals)
+	{
+		if (!Arrival.bDrove)
+		{
+			continue;
+		}
+		if (bWalked[Arrival.UserId])
+		{
+			++NumWalked;
+			WalkSeconds += Arrival.Seconds;
+		}
+		else
+		{
+			++NumDrove;
+			DriveSeconds += Arrival.Seconds;
+		}
+	}
+	AddInfo(FString::Printf(TEXT("%d trips ended: %d walked (average %.0f s), %d driven (average %.0f s); up to %d walkers among %d on the move"),
+		Arrivals.Num(), NumWalked, NumWalked > 0 ? WalkSeconds / NumWalked : 0.0f, NumDrove, NumDrove > 0 ? DriveSeconds / NumDrove : 0.0f, MostWalkers, MostAgents));
+
+	TestEqual(TEXT("Every trip ends"), Arrivals.Num(), NumTrips);
+	TestTrue(TEXT("Nearly every walker arrives on foot"), NumWalked >= NumTrips / 2 * 95 / 100);
+	TestTrue(TEXT("Nearly every vehicle arrives"), NumDrove >= NumTrips / 2 * 95 / 100);
+	TestTrue(TEXT("Walkers and vehicles are on the move together"), MostWalkers >= 20 && MostAgents - MostWalkers >= 5);
+	TestTrue(TEXT("Walking is slower than driving"), NumWalked > 0 && NumDrove > 0 && WalkSeconds / NumWalked > DriveSeconds / NumDrove);
+
+	// The geometric check does see an overlap when there is one: two
+	// vehicles are set off, then the one behind is pushed into the one ahead.
+	ChronoTrafficTests::FRoads Single;
+	const int32 Road = Single.Build(FVector2D(-20000.0, 0.0), FVector2D(20000.0, 0.0));
+	FChronoTrafficSim Pair;
+	Pair.SetNetwork(Single.Graph, Single.TrafficRules);
+	for (int32 Index = 0; Index < 2; ++Index)
+	{
+		FChronoTripRequest Trip;
+		Trip.FromSegmentId = Road;
+		Trip.FromSegmentDistance = 2000.0;
+		Trip.ToSegmentId = Road;
+		Trip.ToSegmentDistance = 36000.0;
+		Trip.UserId = Index;
+		Pair.RequestTrip(Trip);
+	}
+	TArray<FChronoTripArrival> Unused;
+	TestTrue(TEXT("Two vehicles following each other do not overlap"), ChronoTrafficTests::RunChecked(Pair, Single.TrafficRules, 20.0f, Unused, false).IsEmpty());
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChronoCommuteTest, "Chronopolis.Traffic.Commute.CitizensGoToWork",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter)
 
 bool FChronoCommuteTest::RunTest(const FString& Parameters)
@@ -458,6 +635,26 @@ bool FChronoCommuteTest::RunTest(const FString& Parameters)
 	ChronoCommute::GenerateTrips(Population, Buildings, Zoning.GetCellSizeCm(), 0.0, 1.0, CommuteRules, AllDay);
 	TestEqual(TEXT("Two trips a day per commuter"), AllDay.Num(), 2 * Employed);
 
+	// Work close to home is walked to, the rest is driven to.
+	int32 NumWalkTrips = 0;
+	for (const FChronoTripRequest& Trip : AllDay)
+	{
+		NumWalkTrips += Trip.bWalk ? 1 : 0;
+	}
+	AddInfo(FString::Printf(TEXT("%d trips a day, %d on foot"), AllDay.Num(), NumWalkTrips));
+	TestTrue(TEXT("Some commutes are walked and some are driven"), NumWalkTrips > 0 && NumWalkTrips < AllDay.Num());
+
+	FChronoCommuteRules NobodyWalks = CommuteRules;
+	NobodyWalks.WalkDistanceCm = 0.0f;
+	TArray<FChronoTripRequest> AllDriven;
+	ChronoCommute::GenerateTrips(Population, Buildings, Zoning.GetCellSizeCm(), 0.0, 1.0, NobodyWalks, AllDriven);
+	bool bNoneWalked = AllDriven.Num() == AllDay.Num();
+	for (const FChronoTripRequest& Trip : AllDriven)
+	{
+		bNoneWalked = bNoneWalked && !Trip.bWalk;
+	}
+	TestTrue(TEXT("With no walking distance every commute is driven"), bNoneWalked);
+
 	// Cutting the day in slices gives the same trips, each exactly once.
 	int32 InSlices = 0;
 	for (int32 Slice = 0; Slice < 100; ++Slice)
@@ -490,7 +687,7 @@ bool FChronoCommuteTest::RunTest(const FString& Parameters)
 
 		Sim.Step(Step, Roads.TrafficRules);
 		Arrivals.Append(Sim.TakeArrivals());
-		if (!Sim.CheckInvariants(Error))
+		if (!Sim.CheckInvariants(Error) || !Sim.CheckNoOverlap(ChronoTrafficTests::OverlapToleranceCm, Error))
 		{
 			Error = FString::Printf(TEXT("At %.1f s: %s"), Time, *Error);
 		}
@@ -509,9 +706,9 @@ bool FChronoCommuteTest::RunTest(const FString& Parameters)
 	{
 		NumDrove += Arrival.bDrove ? 1 : 0;
 	}
-	AddInfo(FString::Printf(TEXT("%d commuters: %d arrived, %d by driving, average commute %.0f s"), Employed, Arrivals.Num(), NumDrove, Sim.GetStats().AverageTripSeconds));
+	AddInfo(FString::Printf(TEXT("%d commuters: %d arrived, %d on the roads and sidewalks all the way, average commute %.0f s"), Employed, Arrivals.Num(), NumDrove, Sim.GetStats().AverageTripSeconds));
 	TestEqual(TEXT("Every commuter arrives"), Arrivals.Num(), Employed);
-	TestTrue(TEXT("Most commuters drive all the way"), NumDrove >= Employed * 9 / 10);
+	TestTrue(TEXT("Most commuters travel all the way"), NumDrove >= Employed * 9 / 10);
 
 	// Long commutes cost happiness, short ones do not, and the loss is capped.
 	TestTrue(TEXT("A short commute costs nothing"), ChronoCommute::ComputeCommuteHappiness(40.0f, CommuteRules) == 0.0f);

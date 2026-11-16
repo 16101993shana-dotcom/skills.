@@ -24,7 +24,7 @@ namespace ChronoTrafficSubsystemPrivate
 
 	FAutoConsoleCommandWithWorld StatsCommand(
 		TEXT("Chrono.Traffic.Stats"),
-		TEXT("Prints the number of vehicles, trip times and speeds."),
+		TEXT("Prints the number of vehicles and pedestrians, trip times and speeds."),
 		FConsoleCommandWithWorldDelegate::CreateStatic(&StatsFromConsole));
 }
 
@@ -162,8 +162,8 @@ void UChronoTrafficSubsystem::RequestCommuteTrips(double FromDayFraction, double
 void UChronoTrafficSubsystem::LogStats() const
 {
 	const FChronoTrafficStats& Stats = Sim.GetStats();
-	UE_LOG(LogChrono, Display, TEXT("Traffic at %.0f %% of the day: %d vehicles on the road, %d trips waiting"), DayFraction * 100.0, Stats.ActiveVehicles, Stats.WaitingTrips);
+	UE_LOG(LogChrono, Display, TEXT("Traffic at %.0f %% of the day: %d vehicles on the road, %d pedestrians, %d trips waiting"), DayFraction * 100.0, Stats.ActiveVehicles - Stats.ActivePedestrians, Stats.ActivePedestrians, Stats.WaitingTrips);
 	UE_LOG(LogChrono, Display, TEXT("  Average speed %.1f km/h, average trip %.0f s"), Stats.AverageSpeedCmPerS * 0.036f, Stats.AverageTripSeconds);
-	UE_LOG(LogChrono, Display, TEXT("  Trips driven: %d, resolved without driving: %d"), Stats.TripsDriven, Stats.TripsResolvedWithoutDriving);
+	UE_LOG(LogChrono, Display, TEXT("  Trips made on the network: %d, resolved without it: %d"), Stats.TripsDriven, Stats.TripsResolvedWithoutDriving);
 	UE_LOG(LogChrono, Display, TEXT("  Lanes: %d, paths through junctions: %d"), Sim.GetLaneGraph().GetLanes().Num(), Sim.GetLaneGraph().GetConnectors().Num());
 }

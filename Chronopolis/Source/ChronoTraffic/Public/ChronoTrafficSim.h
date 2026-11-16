@@ -25,6 +25,9 @@ struct FChronoTripRequest
 
 	/** Free for the caller: who makes the trip. Returned with the arrival. */
 	int32 UserId = INDEX_NONE;
+
+	/** True to walk on the sidewalks, false to drive on the carriageway. */
+	bool bWalk = false;
 };
 
 /** A trip that ended. */
@@ -42,6 +45,16 @@ struct FChronoVehicle
 	bool bActive = false;
 	int32 UserId = INDEX_NONE;
 
+	/** True for someone on foot, false for a vehicle. */
+	bool bPedestrian = false;
+
+	// How this agent moves, copied from the rules when it sets off.
+	float MaxSpeed = 1000.0f;
+	float MaxAcceleration = 150.0f;
+	float ComfortDeceleration = 200.0f;
+	float MinGap = 150.0f;
+	float TimeHeadway = 1.2f;
+
 	/** Lanes to follow, and the one the vehicle is on or heading to. */
 	TArray<int32> Route;
 	int32 RouteIndex = 0;
@@ -54,6 +67,7 @@ struct FChronoVehicle
 	double Distance = 0.0;
 	float Speed = 0.0f;
 	float Length = 400.0f;
+	float Width = 180.0f;
 
 	/** Where to stop on the last lane. */
 	double TargetDistance = 0.0;
@@ -69,7 +83,10 @@ struct FChronoVehicle
 
 struct FChronoTrafficStats
 {
+	/** Everybody on the move, vehicles and pedestrians. */
 	int32 ActiveVehicles = 0;
+	/** Of whom on foot. */
+	int32 ActivePedestrians = 0;
 	int32 WaitingTrips = 0;
 
 	/** Since the network was last set. */
@@ -119,6 +136,15 @@ public:
 	 */
 	bool CheckInvariants(FString& OutError) const;
 
+	/**
+	 * Geometric side of the same contract: the footprints of all vehicles
+	 * and pedestrians, as oriented rectangles in the ground plane, do not
+	 * overlap by more than ToleranceCm. Independent of lanes and
+	 * reservations, so it also catches what the lane logic would miss, such
+	 * as a walker crossing against the bumper of a waiting vehicle.
+	 */
+	bool CheckNoOverlap(double ToleranceCm, FString& OutError) const;
+
 private:
 	struct FPendingTrip
 	{
@@ -141,6 +167,13 @@ private:
 	/** Rear position of the last vehicle on a lane, or a very large value if the lane is empty. */
 	double GetLastRearOnLane(int32 LaneId, float& OutSpeed) const;
 
+	/**
+	 * A vehicle that has entered a junction still has its tail on the lane it
+	 * is leaving. Position of that tail along the lane, or a very large value
+	 * if nobody is leaving the lane.
+	 */
+	double GetLeavingRearOnLane(int32 LaneId, float& OutSpeed) const;
+
 	FChronoLaneGraph LaneGraph;
 
 	TArray<FChronoVehicle> Vehicles;
@@ -154,6 +187,8 @@ private:
 	TArray<int32> ConnectorHolders;
 	/** Vehicles with a reservation or inside a junction, heading to each lane. */
 	TArray<int32> LaneIncoming;
+	/** Last vehicle that left each lane into a junction: its tail may still be on the lane. */
+	TArray<int32> LaneLeavers;
 
 	TArray<float> LaneSpeeds;
 

@@ -77,6 +77,53 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Vehicles", meta = (ClampMin = "0"))
 	int32 MaxActiveVehicles = 20000;
 
+	// ---- Pedestrians ----
+
+	/** Room a walker takes along the sidewalk. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "20.0"))
+	float PedestrianLengthCm = 50.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "20.0"))
+	float PedestrianWidthCm = 50.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "20.0"))
+	float PedestrianHeightCm = 170.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "30.0"))
+	float PedestrianMaxSpeedCmPerS = 140.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "10.0"))
+	float PedestrianAccelerationCmPerS2 = 100.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "10.0"))
+	float PedestrianDecelerationCmPerS2 = 150.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "10.0"))
+	float PedestrianMinGapCm = 40.0f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0.1"))
+	float PedestrianTimeHeadwaySeconds = 0.5f;
+
+	/** Two walking paths through a junction closer than this cannot be used at the same time. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0.0"))
+	float PedestrianClearanceCm = 60.0f;
+
+	/** On a road without sidewalks, pedestrians walk along the edge of the carriageway, this far inside it. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0.0"))
+	float RoadEdgeMarginCm = 10.0f;
+
+	/** Room kept between such a pedestrian and the vehicles of the nearest lane. A road too narrow for it is not walked. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0.0"))
+	float PedestrianSideClearanceCm = 20.0f;
+
+	/** Where pedestrians cross the street they came by, the crossing runs this far inside the junction. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0.0"))
+	float CrossingInsetCm = 30.0f;
+
+	/** A trip between two buildings closer than this, as the crow flies, is walked. */
+	UPROPERTY(Config, EditAnywhere, Category = "Pedestrians", meta = (ClampMin = "0.0"))
+	float WalkDistanceCm = 30000.0f;
+
 	// ---- Trips ----
 
 	/** Real seconds, at speed x1, of one day of traffic: every commuter drives to work and back once. */

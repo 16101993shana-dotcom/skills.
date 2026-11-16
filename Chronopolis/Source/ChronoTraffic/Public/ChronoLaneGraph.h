@@ -10,6 +10,15 @@
 
 class FChronoRoadGraph;
 
+/** Who may use a lane. */
+enum class EChronoLaneKind : uint8
+{
+	/** On the carriageway. */
+	Vehicle,
+	/** On the sidewalk, or along the edge of a road without sidewalks. */
+	Pedestrian
+};
+
 /** Tunables of traffic. In game they come from UChronoTrafficSettings. */
 struct CHRONOTRAFFIC_API FChronoTrafficRules
 {
@@ -25,8 +34,21 @@ struct CHRONOTRAFFIC_API FChronoTrafficRules
 	/** Two paths through a junction closer than this cannot be used at the same time. */
 	float ConflictClearanceCm = 180.0f;
 
+	/** Same, between two paths that are both for pedestrians. */
+	float PedestrianClearanceCm = 60.0f;
+
+	/** On a road without sidewalks, pedestrians walk along the edge of the carriageway, this far inside it. */
+	float RoadEdgeMarginCm = 10.0f;
+
+	/** Room kept between such a pedestrian and the vehicles of the nearest lane. A road too narrow for it is not walked. */
+	float PedestrianSideClearanceCm = 20.0f;
+
+	/** Where pedestrians cross the street they came by, the crossing runs this far inside the junction. */
+	float CrossingInsetCm = 30.0f;
+
 	// ---- Vehicles (one generic kind for now; each era brings its own) ----
 	float VehicleLengthCm = 400.0f;
+	float VehicleWidthCm = 180.0f;
 	float VehicleMaxSpeedCmPerS = 1000.0f;
 	float MaxAccelerationCmPerS2 = 150.0f;
 	float ComfortDecelerationCmPerS2 = 200.0f;
@@ -45,6 +67,18 @@ struct CHRONOTRAFFIC_API FChronoTrafficRules
 	/** Vehicles on the road at one time. Trips beyond that are resolved without driving. */
 	int32 MaxActiveVehicles = 20000;
 
+	// ---- Pedestrians ----
+	float PedestrianLengthCm = 50.0f;
+	float PedestrianWidthCm = 50.0f;
+	float PedestrianMaxSpeedCmPerS = 140.0f;
+	float PedestrianAccelerationCmPerS2 = 100.0f;
+	float PedestrianDecelerationCmPerS2 = 150.0f;
+	float PedestrianMinGapCm = 40.0f;
+	float PedestrianTimeHeadwaySeconds = 0.5f;
+
+	/** A trip between two buildings closer than this, as the crow flies, is walked. */
+	float WalkDistanceCm = 30000.0f;
+
 	static FChronoTrafficRules FromSettings();
 };
 
@@ -54,6 +88,8 @@ struct FChronoLane
 	int32 SegmentId = INDEX_NONE;
 	int32 FromNodeId = INDEX_NONE;
 	int32 ToNodeId = INDEX_NONE;
+
+	EChronoLaneKind Kind = EChronoLaneKind::Vehicle;
 
 	/** True if the lane runs from the start node of its segment to the end node. */
 	bool bForward = true;
@@ -108,10 +144,10 @@ public:
 
 	/**
 	 * Lane of a segment that runs along the given side (+1 or -1, as for
-	 * zoning cells and buildings): the lane a vehicle leaving a building on
-	 * that side enters. INDEX_NONE if the segment has no lane there.
+	 * zoning cells and buildings): the lane someone leaving a building on
+	 * that side enters. INDEX_NONE if the segment has no lane of that kind.
 	 */
-	int32 FindLaneOnSide(int32 SegmentId, int32 Side) const;
+	int32 FindLaneOnSide(int32 SegmentId, int32 Side, EChronoLaneKind Kind = EChronoLaneKind::Vehicle) const;
 
 	/** Distance along a lane of the point facing a distance along its segment centerline. */
 	double SegmentToLaneDistance(int32 LaneId, double SegmentDistance) const;
@@ -125,7 +161,8 @@ public:
 
 	/**
 	 * Fastest route from a point on a lane to a point on a segment, by any of
-	 * its lanes.
+	 * its lanes of the same kind (vehicles stay on the carriageway,
+	 * pedestrians on the sidewalks).
 	 * @param LaneSpeeds optional current speed of traffic per lane (cm/s), to
 	 * route around congestion. Null uses the speed limits.
 	 * @param OutLaneIds lanes to follow, starting with FromLaneId.

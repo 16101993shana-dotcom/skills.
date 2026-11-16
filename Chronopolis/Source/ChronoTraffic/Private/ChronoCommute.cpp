@@ -17,7 +17,7 @@ namespace ChronoCommutePrivate
 	}
 
 	/** Where a building meets its road. */
-	bool GetAccess(const FChronoBuildingSet& Buildings, int32 BuildingId, double CellSizeCm, int32& OutSegmentId, double& OutSegmentDistance, int32& OutSide)
+	bool GetAccess(const FChronoBuildingSet& Buildings, int32 BuildingId, double CellSizeCm, int32& OutSegmentId, double& OutSegmentDistance, int32& OutSide, FVector2D& OutCenter)
 	{
 		const FChronoBuilding* Building = Buildings.FindBuilding(BuildingId);
 		if (!Building)
@@ -29,6 +29,7 @@ namespace ChronoCommutePrivate
 		OutSegmentId = Building->SegmentId;
 		OutSegmentDistance = (Building->FirstSlot + 0.5 * Building->WidthCells) * CellSizeCm;
 		OutSide = Building->Side;
+		OutCenter = Building->Footprint.Center;
 		return true;
 	}
 }
@@ -42,6 +43,7 @@ FChronoCommuteRules FChronoCommuteRules::FromSettings()
 	Rules.ComfortableCommuteSeconds = Settings->ComfortableCommuteSeconds;
 	Rules.HappinessLostPerExtraMinute = Settings->HappinessLostPerExtraMinute;
 	Rules.MaxHappinessLoss = Settings->MaxCommuteHappinessLoss;
+	Rules.WalkDistanceCm = Settings->WalkDistanceCm;
 	return Rules;
 }
 
@@ -82,14 +84,19 @@ void ChronoCommute::GenerateTrips(const FChronoPopulation& Population, const FCh
 		double WorkDistance = 0.0;
 		int32 HomeSide = 1;
 		int32 WorkSide = 1;
-		if (!GetAccess(Buildings, Households[Citizen.HouseholdId].HomeBuildingId, CellSizeCm, HomeSegment, HomeDistance, HomeSide)
-			|| !GetAccess(Buildings, Citizen.WorkBuildingId, CellSizeCm, WorkSegment, WorkDistance, WorkSide))
+		FVector2D HomeCenter;
+		FVector2D WorkCenter;
+		if (!GetAccess(Buildings, Households[Citizen.HouseholdId].HomeBuildingId, CellSizeCm, HomeSegment, HomeDistance, HomeSide, HomeCenter)
+			|| !GetAccess(Buildings, Citizen.WorkBuildingId, CellSizeCm, WorkSegment, WorkDistance, WorkSide, WorkCenter))
 		{
 			continue;
 		}
 
 		FChronoTripRequest Trip;
 		Trip.UserId = CitizenId;
+
+		// Work close to home is walked to, the rest is driven to.
+		Trip.bWalk = FVector2D::Distance(HomeCenter, WorkCenter) <= Rules.WalkDistanceCm;
 		if (bLeavesHome)
 		{
 			Trip.FromSegmentId = HomeSegment;

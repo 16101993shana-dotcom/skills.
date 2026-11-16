@@ -28,6 +28,8 @@ void AChronoTrafficRenderActor::InitializeFromSubsystem(UChronoTrafficSubsystem*
 
 	// The engine's basic cube is 100 cm on each side.
 	VehicleScale = FVector(Settings->VehicleLengthCm / 100.0, Settings->VehicleWidthCm / 100.0, Settings->VehicleHeightCm / 100.0);
+	PedestrianHeightCm = Settings->PedestrianHeightCm;
+	PedestrianScale = FVector(Settings->PedestrianLengthCm / 100.0, Settings->PedestrianWidthCm / 100.0, Settings->PedestrianHeightCm / 100.0);
 	if (UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
 	{
 		VehicleInstances->SetStaticMesh(Cube);
@@ -71,9 +73,11 @@ void AChronoTrafficRenderActor::Tick(float DeltaSeconds)
 		{
 			Position += Direction * (Vehicles[Index].Speed * Lead);
 
-			// The lane gives the road surface: the box sits on it.
-			Position.Z += 0.5 * VehicleHeightCm;
-			const FTransform Transform(Direction.Rotation(), Position, VehicleScale);
+			// The lane gives the surface (road, sidewalk or verge): the box
+			// sits on it. Walkers are the same box, at their own size.
+			const bool bPedestrian = Vehicles[Index].bPedestrian;
+			Position.Z += 0.5 * (bPedestrian ? PedestrianHeightCm : VehicleHeightCm);
+			const FTransform Transform(Direction.Rotation(), Position, bPedestrian ? PedestrianScale : VehicleScale);
 			VehicleInstances->UpdateInstanceTransform(Index, Transform, true, false, true);
 		}
 		else
