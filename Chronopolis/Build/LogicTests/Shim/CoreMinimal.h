@@ -187,6 +187,7 @@ public:
 	template <typename OtherAlloc> void Append(const TArray<T, OtherAlloc>& O) { V.insert(V.end(), O.V.begin(), O.V.end()); }
 	void Sort() { std::sort(V.begin(), V.end()); }
 	template <typename P> void Sort(P Pred) { std::sort(V.begin(), V.end(), Pred); }
+	int32 Find(const T& X) const { auto It = std::find(V.begin(), V.end(), X); return It == V.end() ? -1 : static_cast<int32>(It - V.begin()); }
 	bool Contains(const T& X) const { return std::find(V.begin(), V.end(), X) != V.end(); }
 	template <typename P> bool ContainsByPredicate(P Pred) const { return std::find_if(V.begin(), V.end(), Pred) != V.end(); }
 	template <typename P> const T* FindByPredicate(P Pred) const { auto It = std::find_if(V.begin(), V.end(), Pred); return It == V.end() ? nullptr : &*It; }

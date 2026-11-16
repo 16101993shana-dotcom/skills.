@@ -8,6 +8,7 @@
 #include "ChronoHeightfield.h"
 #include "ChronoRoadBuilder.h"
 #include "ChronoRoadGraph.h"
+#include "ChronoTrafficSim.h"
 #include "ChronoZoneGrid.h"
 #include "Misc/AutomationTest.h"
 
@@ -173,6 +174,46 @@ bool FChronoAuditCleanCityTest::RunTest(const FString& Parameters)
 		AddError(FString::Printf(TEXT("[%s] %s at %s"), *Issue.Rule.ToString(), *Issue.Description, *Issue.Location.ToCompactString()));
 	}
 	TestEqual(TEXT("Audit with buildings reports nothing"), BuildingIssues.Num(), 0);
+
+	// Traffic on those roads: a rush of trips between random places, audited while it runs.
+	{
+		FChronoTrafficRules TrafficRules;
+		FChronoTrafficSim Traffic;
+		Traffic.SetNetwork(City.Graph, TrafficRules);
+
+		TArray<int32> SegmentIds;
+		City.Graph.GetSegments().GetKeys(SegmentIds);
+		SegmentIds.Sort();
+
+		FRandomStream Random(31);
+		TArray<FChronoAuditIssue> TrafficIssues;
+		int32 NumRequested = 0;
+		for (int32 StepIndex = 0; StepIndex < 3000 && TrafficIssues.Num() == 0; ++StepIndex)
+		{
+			if (StepIndex % 5 == 0 && NumRequested < 300)
+			{
+				const FChronoRoadSegment* From = City.Graph.FindSegment(SegmentIds[Random.RandRange(0, SegmentIds.Num() - 1)]);
+				const FChronoRoadSegment* To = City.Graph.FindSegment(SegmentIds[Random.RandRange(0, SegmentIds.Num() - 1)]);
+				FChronoTripRequest Trip;
+				Trip.FromSegmentId = From->Id;
+				Trip.FromSegmentDistance = Random.FRandRange(0.2f, 0.8f) * From->Length;
+				Trip.FromSide = (NumRequested % 2 == 0) ? 1 : -1;
+				Trip.ToSegmentId = To->Id;
+				Trip.ToSegmentDistance = Random.FRandRange(0.2f, 0.8f) * To->Length;
+				Traffic.RequestTrip(Trip);
+				++NumRequested;
+			}
+			Traffic.Step(0.1f, TrafficRules);
+			ChronoClippingAudit::RunTraffic(Traffic, FChronoAuditSettings(), TrafficIssues);
+		}
+		for (const FChronoAuditIssue& Issue : TrafficIssues)
+		{
+			AddError(FString::Printf(TEXT("[%s] %s"), *Issue.Rule.ToString(), *Issue.Description));
+		}
+		AddInfo(FString::Printf(TEXT("Traffic: %d trips driven, %d resolved without driving"), Traffic.GetStats().TripsDriven, Traffic.GetStats().TripsResolvedWithoutDriving));
+		TestEqual(TEXT("Traffic audit reports nothing"), TrafficIssues.Num(), 0);
+		TestTrue(TEXT("Vehicles drive on the generated city"), Traffic.GetStats().TripsDriven >= 150);
+	}
 
 	// A refused road must leave no trace: an overlapping road is rejected and
 	// the audit is still clean afterwards.

@@ -7,6 +7,6 @@ public class ChronopolisTarget : TargetRules
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
-		ExtraModuleNames.AddRange(new string[] { "ChronoCore", "ChronoRender", "ChronoTerrain", "ChronoRoads", "ChronoZoning", "ChronoBuildings", "ChronoCitizens", "ChronoEconomy", "ChronoAudit", "ChronoSave", "ChronoGame" });
+		ExtraModuleNames.AddRange(new string[] { "ChronoCore", "ChronoRender", "ChronoTerrain", "ChronoRoads", "ChronoZoning", "ChronoBuildings", "ChronoCitizens", "ChronoEconomy", "ChronoTraffic", "ChronoAudit", "ChronoSave", "ChronoGame" });
 	}
 }

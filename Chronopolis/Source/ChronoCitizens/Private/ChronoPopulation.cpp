@@ -469,7 +469,8 @@ void FChronoPopulation::UpdateHappiness(const FChronoCityConditions& Conditions,
 			float Target = Rules.HappinessBase + TaxEffect + HomeEffect;
 			if (Citizen.WorkBuildingId != INDEX_NONE)
 			{
-				Target += Rules.EmployedBonus;
+				// A job is good news, a long way to it less so.
+				Target += Rules.EmployedBonus + Conditions.CommuteHappiness;
 			}
 			else if (IsWorkingAge(Citizen.AgeYears, Rules))
 			{

@@ -41,6 +41,14 @@ bool UChronoPopulationSubsystem::DoesSupportWorldType(const EWorldType::Type Wor
 	return WorldType == EWorldType::Game || WorldType == EWorldType::PIE;
 }
 
+void UChronoPopulationSubsystem::SetConditions(const FChronoCityConditions& InConditions)
+{
+	// The economy owns the tax rates; what traffic reported stays as it is.
+	const float CommuteHappiness = Conditions.CommuteHappiness;
+	Conditions = InConditions;
+	Conditions.CommuteHappiness = CommuteHappiness;
+}
+
 float UChronoPopulationSubsystem::GetZoneDemand(EChronoZoneType Zone) const
 {
 	return Zone < EChronoZoneType::Count ? Population.GetDemand().Get(Zone) : 0.0f;

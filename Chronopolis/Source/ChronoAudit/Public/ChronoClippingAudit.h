@@ -9,6 +9,7 @@
 
 class FChronoBuildingSet;
 class FChronoRoadGraph;
+class FChronoTrafficSim;
 class FChronoZoneGrid;
 struct FChronoHeightfield;
 struct FChronoBuildingRules;
@@ -61,6 +62,8 @@ namespace ChronoAuditRule
 	CHRONOAUDIT_API extern const FName BuildingFloating;
 	/** A building stands on cells that no longer exist or have another zone. */
 	CHRONOAUDIT_API extern const FName BuildingWithoutLot;
+	/** A vehicle overlaps another one, or two crossing paths of a junction are used at once. */
+	CHRONOAUDIT_API extern const FName VehicleCollision;
 }
 
 struct CHRONOAUDIT_API FChronoAuditSettings
@@ -85,6 +88,9 @@ namespace ChronoClippingAudit
 
 	/** Buildings against roads, terrain, their lot and each other. Returns the number of issues added to OutIssues. */
 	CHRONOAUDIT_API int32 RunBuildings(const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneGrid& Grid, const FChronoBuildingSet& Buildings, const FChronoBuildingRules& BuildingRules, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues);
+
+	/** Vehicles against each other. Returns the number of issues added to OutIssues. */
+	CHRONOAUDIT_API int32 RunTraffic(const FChronoTrafficSim& Traffic, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues);
 
 	/** Terrain and roads. Returns the number of issues added to OutIssues. */
 	CHRONOAUDIT_API int32 Run(const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoRoadRules& Rules, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues);

@@ -30,8 +30,9 @@ namespace ChronoSavePrivate
 	// migration code goes here when the format has shipped.
 	// Version 2 adds the zoning grid after the roads, version 3 the buildings,
 	// version 4 the population and the budget, version 5 services, building
-	// levels and loans.
-	const int32 FileVersion = 5;
+	// levels and loans, version 6 the speed limit of roads. Vehicles on the
+	// road are not saved: traffic starts again from the commuters.
+	const int32 FileVersion = 6;
 
 	const TCHAR* DefaultSlot = TEXT("quicksave");
 

@@ -6,6 +6,7 @@
 #include "ChronoRoadBuilder.h"
 #include "ChronoRoadSubsystem.h"
 #include "ChronoTerrainSubsystem.h"
+#include "ChronoTrafficSubsystem.h"
 #include "ChronoZoneGrid.h"
 #include "ChronoZoningSubsystem.h"
 #include "DrawDebugHelpers.h"
@@ -79,6 +80,11 @@ int32 UChronoAuditSubsystem::RunAudit()
 		{
 			ChronoClippingAudit::RunBuildings(Terrain->GetHeightfield(), Roads->GetGraph(), Zoning->GetGrid(), Buildings->GetBuildingSet(), FChronoBuildingRules::FromSettings(), AuditSettings, Issues);
 		}
+	}
+
+	if (const UChronoTrafficSubsystem* Traffic = World->GetSubsystem<UChronoTrafficSubsystem>())
+	{
+		ChronoClippingAudit::RunTraffic(Traffic->GetSim(), AuditSettings, Issues);
 	}
 
 	if (Issues.Num() == 0)

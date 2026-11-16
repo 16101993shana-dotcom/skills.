@@ -26,8 +26,11 @@ public:
 	const FChronoPopulationStats& GetStats() const { return Population.GetStats(); }
 	const FChronoPopulationRules& GetRules() const { return Rules; }
 
-	/** Tax rates and other conditions set by the economy. Applied from the next day. */
-	void SetConditions(const FChronoCityConditions& InConditions) { Conditions = InConditions; }
+	/** Tax rates set by the economy. Applied from the next day. */
+	void SetConditions(const FChronoCityConditions& InConditions);
+
+	/** Happiness change of commuters (0 or negative), set by traffic. Applied from the next day. */
+	void SetCommuteHappiness(float InCommuteHappiness) { Conditions.CommuteHappiness = FMath::Min(InCommuteHappiness, 0.0f); }
 
 	UFUNCTION(BlueprintPure, Category = "Chronopolis|Population")
 	int32 GetPopulationCount() const { return Population.GetStats().Population; }

@@ -38,6 +38,10 @@ struct CHRONOROADS_API FChronoRoadProfileData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Road")
 	bool bOneWay = false;
 
+	/** Speed that traffic aims for on this road, in centimeters per second (800 is about 29 km/h). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Road", meta = (ClampMin = "50.0"))
+	float SpeedLimitCmPerS = 800.0f;
+
 	/** Steepest allowed grade, in percent. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Road", meta = (ClampMin = "0.5"))
 	float MaxSlopePercent = 10.0f;

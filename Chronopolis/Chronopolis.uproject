@@ -12,6 +12,7 @@
 		{ "Name": "ChronoBuildings", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoCitizens", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoEconomy", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoTraffic", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoAudit", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoSave", "Type": "Runtime", "LoadingPhase": "Default" },
 		{ "Name": "ChronoGame", "Type": "Runtime", "LoadingPhase": "Default" }

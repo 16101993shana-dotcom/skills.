@@ -457,8 +457,8 @@ void FChronoRoadGraph::ClearChanges()
 
 bool FChronoRoadGraph::Serialize(FArchive& Ar)
 {
-	// Bump when the binary layout changes.
-	const int32 CurrentVersion = 1;
+	// Bump when the binary layout changes. Version 2 adds the speed limit.
+	const int32 CurrentVersion = 2;
 	// Sanity bound on counts read from a file.
 	const int32 MaxCount = 4 * 1024 * 1024;
 
@@ -542,6 +542,7 @@ bool FChronoRoadGraph::Serialize(FArchive& Ar)
 		Ar << Segment.Profile.bOneWay;
 		Ar << Segment.Profile.MaxSlopePercent;
 		Ar << Segment.Profile.MinCurveRadiusCm;
+		Ar << Segment.Profile.SpeedLimitCmPerS;
 
 		if (Ar.IsLoading())
 		{
@@ -551,7 +552,8 @@ bool FChronoRoadGraph::Serialize(FArchive& Ar)
 				&& Segment.StartNodeId != Segment.EndNodeId
 				&& Nodes.Contains(Segment.StartNodeId)
 				&& Nodes.Contains(Segment.EndNodeId)
-				&& Segment.Profile.CarriagewayWidthCm > 0.0f;
+				&& Segment.Profile.CarriagewayWidthCm > 0.0f
+				&& Segment.Profile.SpeedLimitCmPerS > 0.0f;
 			if (bValid)
 			{
 				Segment.Profile.ProfileId = FName(*ProfileId);

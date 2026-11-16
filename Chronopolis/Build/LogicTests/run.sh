@@ -1,6 +1,6 @@
 #!/bin/bash
 # Compiles the plain-logic code of Chronopolis (terrain, roads, zoning,
-# buildings, population, budget, audit) with g++ against stand-in Unreal headers, and runs its
+# buildings, population, budget, traffic, audit) with g++ against stand-in Unreal headers, and runs its
 # automation tests. No Unreal Engine needed.
 #
 # This checks the logic and the zero-clipping audit. It does NOT prove that
@@ -18,7 +18,7 @@ mkdir -p "$OUT/gen"
 # Empty stand-ins for the headers that Unreal Header Tool would generate.
 for f in $(grep -rhoE '"[A-Za-z0-9]+\.generated\.h"' "$SRC" | tr -d '"' | sort -u); do : > "$OUT/gen/$f"; done
 
-MODULES="ChronoCore ChronoTerrain ChronoRoads ChronoZoning ChronoBuildings ChronoCitizens ChronoEconomy ChronoAudit"
+MODULES="ChronoCore ChronoTerrain ChronoRoads ChronoZoning ChronoBuildings ChronoCitizens ChronoEconomy ChronoTraffic ChronoAudit"
 INC="-I$HERE/Shim -I$OUT/gen"
 DEF=""
 for m in $MODULES; do
@@ -39,6 +39,9 @@ $SRC/ChronoBuildings/Private/ChronoBuildingSet.cpp
 $SRC/ChronoBuildings/Private/ChronoBuildingMeshBuilder.cpp
 $SRC/ChronoCitizens/Private/ChronoPopulation.cpp
 $SRC/ChronoEconomy/Private/ChronoBudget.cpp
+$SRC/ChronoTraffic/Private/ChronoLaneGraph.cpp
+$SRC/ChronoTraffic/Private/ChronoTrafficSim.cpp
+$SRC/ChronoTraffic/Private/ChronoCommute.cpp
 $SRC/ChronoAudit/Private/ChronoClippingAudit.cpp
 $SRC/ChronoTerrain/Private/Tests/ChronoHeightfieldTests.cpp
 $SRC/ChronoRoads/Private/Tests/ChronoRoadTests.cpp
@@ -46,6 +49,7 @@ $SRC/ChronoZoning/Private/Tests/ChronoZoningTests.cpp
 $SRC/ChronoBuildings/Private/Tests/ChronoBuildingTests.cpp
 $SRC/ChronoCitizens/Private/Tests/ChronoPopulationTests.cpp
 $SRC/ChronoEconomy/Private/Tests/ChronoBudgetTests.cpp
+$SRC/ChronoTraffic/Private/Tests/ChronoTrafficTests.cpp
 $SRC/ChronoAudit/Private/Tests/ChronoAuditTests.cpp
 $HERE/Shim/main.cpp"
 

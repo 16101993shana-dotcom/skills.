@@ -91,6 +91,9 @@ struct FChronoCityConditions
 	float TaxRate[static_cast<int32>(EChronoZoneType::Count)] = { 0.0f, 0.09f, 0.09f, 0.09f, 0.09f, 0.0f };
 
 	float GetTaxRate(EChronoZoneType Zone) const { return TaxRate[static_cast<int32>(Zone)]; }
+
+	/** Happiness change of everybody who works, from the time spent commuting (0 or negative). Set by traffic. */
+	float CommuteHappiness = 0.0f;
 };
 
 struct FChronoCitizen

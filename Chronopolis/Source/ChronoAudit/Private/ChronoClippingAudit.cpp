@@ -6,6 +6,7 @@
 #include "ChronoRoadGeometry.h"
 #include "ChronoRoadGraph.h"
 #include "ChronoRoadMeshBuilder.h"
+#include "ChronoTrafficSim.h"
 #include "ChronoZoneGrid.h"
 
 namespace ChronoAuditRule
@@ -25,6 +26,7 @@ namespace ChronoAuditRule
 	const FName BuildingBuried(TEXT("BuildingBuried"));
 	const FName BuildingFloating(TEXT("BuildingFloating"));
 	const FName BuildingWithoutLot(TEXT("BuildingWithoutLot"));
+	const FName VehicleCollision(TEXT("VehicleCollision"));
 }
 
 namespace ChronoClippingAuditPrivate
@@ -470,4 +472,20 @@ int32 ChronoClippingAudit::RunBuildings(const FChronoHeightfield& Heightfield, c
 	}
 
 	return NumAdded;
+}
+
+int32 ChronoClippingAudit::RunTraffic(const FChronoTrafficSim& Traffic, const FChronoAuditSettings& Settings, TArray<FChronoAuditIssue>& OutIssues)
+{
+	// The simulation checks its own contract: nobody inside the vehicle
+	// ahead, no two conflicting paths of a junction in use at once.
+	FString Error;
+	if (Traffic.CheckInvariants(Error) || OutIssues.Num() >= Settings.MaxIssues)
+	{
+		return 0;
+	}
+
+	FChronoAuditIssue& Issue = OutIssues.AddDefaulted_GetRef();
+	Issue.Rule = ChronoAuditRule::VehicleCollision;
+	Issue.Description = Error;
+	return 1;
 }
