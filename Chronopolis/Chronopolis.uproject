@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "Chronopolis: one city, seven eras.",
+	"Modules": [
+		{ "Name": "ChronoCore", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoRender", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoTerrain", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoRoads", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoZoning", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoBuildings", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoCitizens", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoEconomy", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoTraffic", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoCiv", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoAudit", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoSave", "Type": "Runtime", "LoadingPhase": "Default" },
+		{ "Name": "ChronoGame", "Type": "Runtime", "LoadingPhase": "Default" }
+	],
+	"Plugins": [
+		{ "Name": "EnhancedInput", "Enabled": true }
+	]
+}
