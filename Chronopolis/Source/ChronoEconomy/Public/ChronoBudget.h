@@ -41,12 +41,16 @@ struct CHRONOECONOMY_API FChronoEconomyRules
 	float LoanInterestRate = 0.1f;
 	int32 LoanTermDays = 360;
 
-	// Science and culture: a little from everybody, more from civic workers.
-	// Culture also follows how happy people are.
-	float SciencePerThousandCitizensPerDay = 0.1f;
-	float SciencePerCivicWorkerPerDay = 0.02f;
-	float CulturePerThousandCitizensPerDay = 0.1f;
-	float CulturePerCivicWorkerPerDay = 0.02f;
+	// Science and culture: a base yield from the city itself, some from
+	// everybody, more from civic workers, and science from the households a
+	// school serves. Culture beyond the base follows how happy people are.
+	float BaseSciencePerDay = 0.3f;
+	float BaseCulturePerDay = 0.3f;
+	float SciencePerThousandCitizensPerDay = 1.0f;
+	float SciencePerCivicWorkerPerDay = 0.05f;
+	float SciencePerEducatedHouseholdPerDay = 0.01f;
+	float CulturePerThousandCitizensPerDay = 0.8f;
+	float CulturePerCivicWorkerPerDay = 0.05f;
 
 	static FChronoEconomyRules FromSettings();
 };

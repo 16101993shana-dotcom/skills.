@@ -476,6 +476,27 @@ void AChronoPlayerController::ChronoService(int32 Index)
 	}
 }
 
+void AChronoPlayerController::ChronoHeritage()
+{
+	FVector Ground;
+	UChronoBuildingSubsystem* Buildings = GetWorld()->GetSubsystem<UChronoBuildingSubsystem>();
+	if (!Buildings || !GetGroundUnderCursor(Ground))
+	{
+		return;
+	}
+
+	const FVector2D Point(Ground.X, Ground.Y);
+	const bool bListed = !Buildings->IsHeritageAt(Point);
+	if (!Buildings->SetHeritageAt(Point, bListed))
+	{
+		ShowToolMessage(LOCTEXT("HeritageNone", "Point at a building that grew in the city to list it as heritage."), true);
+		return;
+	}
+	ShowToolMessage(bListed
+		? LOCTEXT("HeritageListed", "Listed as heritage: it will keep its style through the eras.")
+		: LOCTEXT("HeritageUnlisted", "No longer heritage: it will be rebuilt in the style of the current era."), false);
+}
+
 void AChronoPlayerController::SetServiceBuilding(FName DefId)
 {
 	ServiceDefId = DefId;

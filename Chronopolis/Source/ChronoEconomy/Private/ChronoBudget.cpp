@@ -22,6 +22,9 @@ FChronoEconomyRules FChronoEconomyRules::FromSettings()
 	Rules.MaxDebt = Settings->MaxDebt;
 	Rules.LoanInterestRate = Settings->LoanInterestRate;
 	Rules.LoanTermDays = Settings->LoanTermDays;
+	Rules.BaseSciencePerDay = Settings->BaseSciencePerDay;
+	Rules.BaseCulturePerDay = Settings->BaseCulturePerDay;
+	Rules.SciencePerEducatedHouseholdPerDay = Settings->SciencePerEducatedHouseholdPerDay;
 	Rules.SciencePerThousandCitizensPerDay = Settings->SciencePerThousandCitizensPerDay;
 	Rules.SciencePerCivicWorkerPerDay = Settings->SciencePerCivicWorkerPerDay;
 	Rules.CulturePerThousandCitizensPerDay = Settings->CulturePerThousandCitizensPerDay;
@@ -166,8 +169,13 @@ void FChronoBudget::StepDay(const FChronoPopulationStats& Stats, double RoadArea
 	const double CivicWorkers = Workers(EChronoZoneType::Civic);
 	const double Mood = FMath::Clamp(Stats.AverageHappiness / 50.0, 0.0, 2.0);
 
-	SciencePerDay = Thousands * Rules.SciencePerThousandCitizensPerDay + CivicWorkers * Rules.SciencePerCivicWorkerPerDay;
-	CulturePerDay = (Thousands * Rules.CulturePerThousandCitizensPerDay + CivicWorkers * Rules.CulturePerCivicWorkerPerDay) * Mood;
+	const double Educated = Stats.HouseholdsServed[static_cast<int32>(EChronoServiceType::Education)];
+	const double Inhabited = Stats.Population > 0 ? 1.0 : 0.0;
+
+	SciencePerDay = Inhabited * Rules.BaseSciencePerDay + Thousands * Rules.SciencePerThousandCitizensPerDay
+		+ CivicWorkers * Rules.SciencePerCivicWorkerPerDay + Educated * Rules.SciencePerEducatedHouseholdPerDay;
+	CulturePerDay = Inhabited * Rules.BaseCulturePerDay
+		+ (Thousands * Rules.CulturePerThousandCitizensPerDay + CivicWorkers * Rules.CulturePerCivicWorkerPerDay) * Mood;
 	Science += SciencePerDay;
 	Culture += CulturePerDay;
 }

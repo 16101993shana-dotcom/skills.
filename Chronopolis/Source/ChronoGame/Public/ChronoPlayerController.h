@@ -62,6 +62,10 @@ public:
 	UFUNCTION(Exec)
 	void ChronoService(int32 Index);
 
+	/** Console: ChronoHeritage lists the building under the cursor as heritage, or takes it off the list. */
+	UFUNCTION(Exec)
+	void ChronoHeritage();
+
 	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Tools")
 	void SetToolMode(EChronoToolMode NewMode);
 

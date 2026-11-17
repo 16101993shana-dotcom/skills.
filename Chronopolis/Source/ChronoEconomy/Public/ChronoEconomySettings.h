@@ -59,15 +59,26 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Loans", meta = (ClampMin = "1"))
 	int32 LoanTermDays = 360;
 
+	/** Science and culture the city yields every day as soon as it has inhabitants, like a city center. */
 	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
-	float SciencePerThousandCitizensPerDay = 0.1f;
+	float BaseSciencePerDay = 0.3f;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
-	float SciencePerCivicWorkerPerDay = 0.02f;
+	float BaseCulturePerDay = 0.3f;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
-	float CulturePerThousandCitizensPerDay = 0.1f;
+	float SciencePerThousandCitizensPerDay = 1.0f;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
-	float CulturePerCivicWorkerPerDay = 0.02f;
+	float SciencePerCivicWorkerPerDay = 0.05f;
+
+	/** Science from every household within reach of a school. */
+	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
+	float SciencePerEducatedHouseholdPerDay = 0.01f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
+	float CulturePerThousandCitizensPerDay = 0.8f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Progress", meta = (ClampMin = "0.0"))
+	float CulturePerCivicWorkerPerDay = 0.05f;
 };

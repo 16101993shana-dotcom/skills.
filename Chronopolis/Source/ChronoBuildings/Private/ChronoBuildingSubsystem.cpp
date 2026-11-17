@@ -24,6 +24,8 @@ void UChronoBuildingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	const UChronoBuildingSettings* Settings = UChronoBuildingSettings::Get();
 	Rules = FChronoBuildingRules::FromSettings();
 	Definitions = Settings->Definitions;
+	Availability.Filter(Definitions, ActiveDefinitions);
+	RenewalsPerStep = FMath::Max(Settings->RenewalsPerStep, 0);
 	GrowthIntervalTicks = FMath::Max(Settings->GrowthIntervalTicks, 1);
 	GrowthPerStep = FMath::Max(Settings->GrowthPerStep, 0);
 	UpgradesPerStep = FMath::Max(Settings->UpgradesPerStep, 0);
@@ -99,6 +101,39 @@ const FChronoBuildingDefData* UChronoBuildingSubsystem::FindDefinition(FName Def
 	return Definitions.FindByPredicate([DefId](const FChronoBuildingDefData& Definition) { return Definition.DefId == DefId; });
 }
 
+void UChronoBuildingSubsystem::SetAvailability(const FChronoBuildingAvailability& InAvailability)
+{
+	Availability = InAvailability;
+	Availability.Filter(Definitions, ActiveDefinitions);
+	Buildings.SetStyle(Availability.Civilization, Availability.Era);
+}
+
+void UChronoBuildingSubsystem::SetCivilizationModifiers(float InConstructionCostMultiplier, float InWaterRadiusMultiplier)
+{
+	ConstructionCostMultiplier = FMath::Max(InConstructionCostMultiplier, 0.0f);
+	WaterRadiusMultiplier = FMath::Max(InWaterRadiusMultiplier, 0.0f);
+}
+
+bool UChronoBuildingSubsystem::SetHeritageAt(FVector2D WorldXY, bool bHeritage)
+{
+	const int32 BuildingId = Buildings.FindBuildingAt(WorldXY);
+	const FChronoBuilding* Building = Buildings.FindBuilding(BuildingId);
+	// Only buildings that grew on their own: the player's services are never renewed anyway.
+	if (!Building || Building->bPlayerPlaced || !Buildings.SetHeritage(BuildingId, bHeritage))
+	{
+		return false;
+	}
+
+	BroadcastChanges();
+	return true;
+}
+
+bool UChronoBuildingSubsystem::IsHeritageAt(FVector2D WorldXY) const
+{
+	const FChronoBuilding* Building = Buildings.FindBuilding(Buildings.FindBuildingAt(WorldXY));
+	return Building && Building->bHeritage;
+}
+
 float UChronoBuildingSubsystem::GetLandValueAt(FVector2D WorldXY) const
 {
 	// A point fronts on a road when it lies in a first-row cell.
@@ -141,11 +176,13 @@ int32 UChronoBuildingSubsystem::GrowStep(int64 TickIndex, int32 MaxNewBuildings)
 	const int32 StepSeed = GrowthSeed ^ static_cast<int32>(TickIndex & 0x7FFFFFFF) ^ (Buildings.GetNumBuildings() * 7919);
 	FRandomStream Random(StepSeed);
 
-	const int32 NumCreated = Buildings.Grow(Zoning->GetGrid(), Terrain->GetHeightfield(), Roads->GetGraph(), Definitions, Rules, Random, MaxNewBuildings, bHasZoneDemand ? &ZoneDemand : nullptr);
+	const int32 NumCreated = Buildings.Grow(Zoning->GetGrid(), Terrain->GetHeightfield(), Roads->GetGraph(), ActiveDefinitions, Rules, Random, MaxNewBuildings, bHasZoneDemand ? &ZoneDemand : nullptr);
 	// Buildings already standing gain a level where the land value allows it.
 	const int32 NumUpgraded = Buildings.UpgradeBuildings(Rules, Random, UpgradesPerStep);
+	// Buildings of an earlier era are rebuilt in the current style, a few at a time.
+	const int32 NumRenewed = Buildings.RenewBuildings(Zoning->GetGrid(), Terrain->GetHeightfield(), Roads->GetGraph(), ActiveDefinitions, Rules, Random, RenewalsPerStep);
 
-	if (NumCreated > 0 || NumUpgraded > 0)
+	if (NumCreated > 0 || NumUpgraded > 0 || NumRenewed > 0)
 	{
 		BroadcastChanges();
 	}
@@ -156,11 +193,24 @@ EChronoPlaceResult UChronoBuildingSubsystem::PlaceServiceBuilding(FName DefId, F
 {
 	OutBuildingId = INDEX_NONE;
 
-	const FChronoBuildingDefData* Definition = FindDefinition(DefId);
-	if (!Definition || Definition->Service == EChronoServiceType::None)
+	// The building asked for, or this civilization's own version of it.
+	const FChronoBuildingDefData* Known = FindDefinition(DefId);
+	const FChronoBuildingDefData* Resolved = Availability.Resolve(DefId, Definitions);
+	if (!Known || Known->Service == EChronoServiceType::None)
 	{
 		return EChronoPlaceResult::UnknownBuilding;
 	}
+	if (!Resolved || Resolved->Service == EChronoServiceType::None)
+	{
+		return EChronoPlaceResult::NotUnlocked;
+	}
+
+	FChronoBuildingDefData Placed = *Resolved;
+	if (Placed.Service == EChronoServiceType::Water)
+	{
+		Placed.ServiceRadiusCm *= WaterRadiusMultiplier;
+	}
+	const FChronoBuildingDefData* Definition = &Placed;
 
 	const UWorld* World = GetWorld();
 	const UChronoTerrainSubsystem* Terrain = World ? World->GetSubsystem<UChronoTerrainSubsystem>() : nullptr;
@@ -201,7 +251,7 @@ bool UChronoBuildingSubsystem::DemolishBuildingAt(FVector2D WorldXY)
 TArray<FName> UChronoBuildingSubsystem::GetServiceBuildingIds() const
 {
 	TArray<FName> Ids;
-	for (const FChronoBuildingDefData& Definition : Definitions)
+	for (const FChronoBuildingDefData& Definition : ActiveDefinitions)
 	{
 		if (Definition.Service != EChronoServiceType::None)
 		{
@@ -213,8 +263,8 @@ TArray<FName> UChronoBuildingSubsystem::GetServiceBuildingIds() const
 
 float UChronoBuildingSubsystem::GetConstructionCost(FName DefId) const
 {
-	const FChronoBuildingDefData* Definition = FindDefinition(DefId);
-	return Definition ? Definition->ConstructionCost : 0.0f;
+	const FChronoBuildingDefData* Definition = Availability.Resolve(DefId, Definitions);
+	return Definition ? Definition->ConstructionCost * ConstructionCostMultiplier : 0.0f;
 }
 
 FText UChronoBuildingSubsystem::GetPlaceResultText(EChronoPlaceResult Result)
@@ -231,6 +281,8 @@ FText UChronoBuildingSubsystem::GetPlaceResultText(EChronoPlaceResult Result)
 		return LOCTEXT("PlaceDoesNotFit", "The building does not fit here: the plot is too small, already taken, or on a bend.");
 	case EChronoPlaceResult::NotEnoughMoney:
 		return LOCTEXT("PlaceNoMoney", "Not enough money in the treasury.");
+	case EChronoPlaceResult::NotUnlocked:
+		return LOCTEXT("PlaceNotUnlocked", "Your city does not know how to build this yet: research the technology or civic that unlocks it.");
 	default:
 		return FText::GetEmpty();
 	}

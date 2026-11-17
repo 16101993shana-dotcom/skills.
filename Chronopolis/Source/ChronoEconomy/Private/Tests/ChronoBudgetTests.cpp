@@ -39,9 +39,10 @@ bool FChronoBudgetTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Road upkeep"), FMath::IsNearlyEqual(Today.RoadUpkeep, 40.0, 0.001));
 	TestTrue(TEXT("The treasury moves by income minus expenses"), FMath::IsNearlyEqual(Budget.GetTreasury(), Rules.StartingTreasury + 114.75 - 40.0, 0.001));
 
-	// Science and culture: 1 thousand x 0.1 + 50 civic workers x 0.02 = 1.1 each per day at neutral happiness.
-	TestTrue(TEXT("Science accumulates"), FMath::IsNearlyEqual(Budget.GetScience(), 1.1, 0.001));
-	TestTrue(TEXT("Culture accumulates"), FMath::IsNearlyEqual(Budget.GetCulture(), 1.1, 0.001));
+	// Science: base 0.3 + 1 thousand x 1.0 + 50 civic workers x 0.05 = 3.8 a day (no school yet).
+	// Culture: base 0.3 + (1 thousand x 0.8 + 50 x 0.05) at neutral happiness = 3.6 a day.
+	TestTrue(TEXT("Science accumulates"), FMath::IsNearlyEqual(Budget.GetScience(), 3.8, 0.001));
+	TestTrue(TEXT("Culture accumulates"), FMath::IsNearlyEqual(Budget.GetCulture(), 3.6, 0.001));
 
 	// The month closes after DaysPerMonth days.
 	for (int32 Day = 1; Day < Rules.DaysPerMonth; ++Day)

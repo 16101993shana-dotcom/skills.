@@ -33,6 +33,39 @@ public:
 	/** Definition of a building kind, or null if it is no longer in the project settings. */
 	const FChronoBuildingDefData* FindDefinition(FName DefId) const;
 
+	/** The definitions the city can build now, given its civilization, era and unlocks. */
+	const TArray<FChronoBuildingDefData>& GetActiveDefinitions() const { return ActiveDefinitions; }
+
+	/**
+	 * What the city can build, pushed by the civilization system when the
+	 * game starts, when something is unlocked and when an era begins. New
+	 * buildings take the style of that civilization and era, and older ones
+	 * are rebuilt in it little by little, except heritage buildings.
+	 */
+	void SetAvailability(const FChronoBuildingAvailability& InAvailability);
+	const FChronoBuildingAvailability& GetAvailability() const { return Availability; }
+
+	/**
+	 * Bonuses of the civilization: price of the buildings the player places,
+	 * and reach of its water services.
+	 */
+	void SetCivilizationModifiers(float InConstructionCostMultiplier, float InWaterRadiusMultiplier);
+
+	/** Lists the building whose walls contain a point as heritage, or takes it off the list. False if there is none. */
+	UFUNCTION(BlueprintCallable, Category = "Chronopolis|Buildings")
+	bool SetHeritageAt(FVector2D WorldXY, bool bHeritage);
+
+	/** True if the building whose walls contain a point is heritage. */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
+	bool IsHeritageAt(FVector2D WorldXY) const;
+
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
+	int32 GetNumHeritage() const { return Buildings.CountHeritage(); }
+
+	/** Grown buildings of an earlier era, still waiting to be rebuilt in the current style. */
+	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
+	int32 GetNumOutdated() const { return Buildings.CountOutdated(); }
+
 	UFUNCTION(BlueprintPure, Category = "Chronopolis|Buildings")
 	int32 GetNumBuildings() const { return Buildings.GetNumBuildings(); }
 
@@ -92,6 +125,11 @@ private:
 	FChronoBuildingSet Buildings;
 	FChronoBuildingRules Rules;
 	TArray<FChronoBuildingDefData> Definitions;
+	TArray<FChronoBuildingDefData> ActiveDefinitions;
+	FChronoBuildingAvailability Availability;
+	float ConstructionCostMultiplier = 1.0f;
+	float WaterRadiusMultiplier = 1.0f;
+	int32 RenewalsPerStep = 1;
 
 	FChronoZoneDemand ZoneDemand;
 	bool bHasZoneDemand = false;

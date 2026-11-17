@@ -35,8 +35,10 @@ enum class EChronoRoofType : uint8
 };
 
 /**
- * One kind of building that can grow on zoned cells. Authored as data (project
- * settings for now, one data asset per civilization and era in Phase 5).
+ * One kind of building that can grow on zoned cells, or that the player
+ * places. Authored as data in the project settings. Which ones a city can use
+ * depends on its civilization, its era and what it has researched (see
+ * FChronoBuildingAvailability).
  */
 USTRUCT(BlueprintType)
 struct CHRONOBUILDINGS_API FChronoBuildingDefData
@@ -49,6 +51,31 @@ struct CHRONOBUILDINGS_API FChronoBuildingDefData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building")
 	EChronoZoneType Zone = EChronoZoneType::Residential;
+
+	// ---- Availability ----
+
+	/** Civilization that builds this, or None for every civilization. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Availability")
+	FName Civilization = NAME_None;
+
+	/**
+	 * Building of every civilization that this one takes the place of, for
+	 * its own civilization (for example a civilization's own school). While
+	 * this one is available, the replaced one is not.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Availability")
+	FName Replaces = NAME_None;
+
+	/** First and last era (0 for the first) in which it is built. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Availability", meta = (ClampMin = "0"))
+	int32 MinEra = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Availability", meta = (ClampMin = "0"))
+	int32 MaxEra = 99;
+
+	/** Technology or civic that unlocks it, or None if it is known from the start. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Availability")
+	FName RequiredUnlock = NAME_None;
 
 	/** Lot size in zoning cells: along the road, then away from it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lot", meta = (ClampMin = "1", ClampMax = "8"))
@@ -164,6 +191,45 @@ struct FChronoBuilding
 	EChronoServiceType Service = EChronoServiceType::None;
 	float ServiceRadiusCm = 0.0f;
 	float UpkeepPerDay = 0.0f;
+
+	/** Era in which it was built (0 for the first), and by which civilization: they give its style. */
+	int32 Era = 0;
+	FName Civilization = NAME_None;
+
+	/**
+	 * Listed as heritage by the player: kept as it is when the city moves on
+	 * to a new era, instead of being rebuilt in the style of that era.
+	 */
+	bool bHeritage = false;
+};
+
+/**
+ * What a city can build: its civilization, its era and what it has unlocked.
+ * By default nothing is restricted, which is how the building tests and a
+ * world without the civilization system run.
+ */
+struct CHRONOBUILDINGS_API FChronoBuildingAvailability
+{
+	bool bRestricted = false;
+	FName Civilization = NAME_None;
+	int32 Era = 0;
+	TSet<FName> Unlocked;
+
+	/** True if the definition can be built now, for its own sake (not looking at replacements). */
+	bool AllowsOnItsOwn(const FChronoBuildingDefData& Definition) const;
+
+	/** True if the definition can be built now and no available building of this civilization replaces it. */
+	bool Allows(const FChronoBuildingDefData& Definition, TConstArrayView<FChronoBuildingDefData> AllDefinitions) const;
+
+	/** The definitions that can be built now, in their original order. */
+	void Filter(TConstArrayView<FChronoBuildingDefData> AllDefinitions, TArray<FChronoBuildingDefData>& OutDefinitions) const;
+
+	/**
+	 * Definition to build when the player asks for RequestedId: that one, or
+	 * the building of this civilization that replaces it. Null if neither is
+	 * available now.
+	 */
+	const FChronoBuildingDefData* Resolve(FName RequestedId, TConstArrayView<FChronoBuildingDefData> AllDefinitions) const;
 };
 
 /** Why a building could not be placed by the player. */
@@ -174,7 +240,9 @@ enum class EChronoPlaceResult : uint8
 	UnknownBuilding,
 	NoLot,
 	DoesNotFit,
-	NotEnoughMoney
+	NotEnoughMoney,
+	/** Not known yet: a technology or civic unlocks it, or it belongs to another era or civilization. */
+	NotUnlocked
 };
 
 /**
@@ -309,6 +377,15 @@ public:
 	/** Buildings that may gain a level in one growth step. */
 	UPROPERTY(Config, EditAnywhere, Category = "Levels", meta = (ClampMin = "0", ClampMax = "64"))
 	int32 UpgradesPerStep = 1;
+
+	// ---- Eras ----
+
+	/**
+	 * Buildings of an earlier era that may be rebuilt in the style of the
+	 * current one, in one growth step. Heritage buildings never are.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Eras", meta = (ClampMin = "0", ClampMax = "64"))
+	int32 RenewalsPerStep = 1;
 
 	// ---- Rendering ----
 

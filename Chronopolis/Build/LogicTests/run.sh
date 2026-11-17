@@ -1,6 +1,6 @@
 #!/bin/bash
 # Compiles the plain-logic code of Chronopolis (terrain, roads, zoning,
-# buildings, population, budget, traffic, audit) with g++ against stand-in Unreal headers, and runs its
+# buildings, population, budget, traffic, audit, civilizations) with g++ against stand-in Unreal headers, and runs its
 # automation tests. No Unreal Engine needed.
 #
 # This checks the logic and the zero-clipping audit. It does NOT prove that
@@ -15,10 +15,13 @@ SRC="$HERE/../../Source"
 OUT="${TMPDIR:-/tmp}/chronopolis-logic-tests"
 mkdir -p "$OUT/gen"
 
+# The project's real data (buildings, eras, trees, civilizations) as C++.
+python3 "$HERE/ini_to_cpp.py" "$HERE/../../Config/DefaultGame.ini" "$OUT/gen/ChronoIniData.inc"
+
 # Empty stand-ins for the headers that Unreal Header Tool would generate.
 for f in $(grep -rhoE '"[A-Za-z0-9]+\.generated\.h"' "$SRC" | tr -d '"' | sort -u); do : > "$OUT/gen/$f"; done
 
-MODULES="ChronoCore ChronoTerrain ChronoRoads ChronoZoning ChronoBuildings ChronoCitizens ChronoEconomy ChronoTraffic ChronoAudit"
+MODULES="ChronoCore ChronoTerrain ChronoRoads ChronoZoning ChronoBuildings ChronoCitizens ChronoEconomy ChronoTraffic ChronoAudit ChronoCiv"
 INC="-I$HERE/Shim -I$OUT/gen"
 DEF=""
 for m in $MODULES; do
@@ -43,6 +46,7 @@ $SRC/ChronoTraffic/Private/ChronoLaneGraph.cpp
 $SRC/ChronoTraffic/Private/ChronoTrafficSim.cpp
 $SRC/ChronoTraffic/Private/ChronoCommute.cpp
 $SRC/ChronoAudit/Private/ChronoClippingAudit.cpp
+$SRC/ChronoCiv/Private/ChronoProgression.cpp
 $SRC/ChronoTerrain/Private/Tests/ChronoHeightfieldTests.cpp
 $SRC/ChronoRoads/Private/Tests/ChronoRoadTests.cpp
 $SRC/ChronoZoning/Private/Tests/ChronoZoningTests.cpp
@@ -51,6 +55,8 @@ $SRC/ChronoCitizens/Private/Tests/ChronoPopulationTests.cpp
 $SRC/ChronoEconomy/Private/Tests/ChronoBudgetTests.cpp
 $SRC/ChronoTraffic/Private/Tests/ChronoTrafficTests.cpp
 $SRC/ChronoAudit/Private/Tests/ChronoAuditTests.cpp
+$SRC/ChronoCiv/Private/Tests/ChronoCivTests.cpp
+$HERE/ProjectDataTests.cpp
 $HERE/Shim/main.cpp"
 
 g++ -std=c++20 -O1 -Wall -Wno-unused-variable -Wno-unused-but-set-variable $INC $DEF $FILES -o "$OUT/chrono_tests"

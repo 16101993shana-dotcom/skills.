@@ -51,6 +51,7 @@ struct FString {
 	bool IsEmpty() const { return S.empty(); }
 	bool operator==(const FString& O) const { return S == O.S; }
 	FString operator+(const FString& O) const { return FString(S + O.S); }
+	FString& operator+=(const FString& O) { S += O.S; return *this; }
 	static FString Printf(const char* Format, ...) { char Buffer[4096]; va_list Args; va_start(Args, Format); std::vsnprintf(Buffer, sizeof(Buffer), Format, Args); va_end(Args); return FString(Buffer); }
 };
 struct FName {
@@ -205,6 +206,7 @@ public:
 	int32 Num() const { return Count; }
 	const T& operator[](int32 i) const { check(i >= 0 && i < Count); return Data[i]; }
 	const T* begin() const { return Data; } const T* end() const { return Data + Count; }
+	template <typename P> const T* FindByPredicate(P Pred) const { for (int32 i = 0; i < Count; ++i) if (Pred(Data[i])) return &Data[i]; return nullptr; }
 };
 
 template <typename K, typename V> struct TPair { K Key; V Value; };

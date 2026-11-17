@@ -69,6 +69,32 @@ public:
 	int32 UpgradeBuildings(const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxUpgrades);
 
 	/**
+	 * Era and civilization given to the buildings created from now on: they
+	 * decide their style. 0 and None until the civilization system sets them.
+	 */
+	void SetStyle(FName InCivilization, int32 InEra);
+	int32 GetEra() const { return CurrentEra; }
+	FName GetCivilization() const { return CurrentCivilization; }
+
+	/**
+	 * Rebuilds up to MaxRenewals grown buildings of an earlier era (or of
+	 * another civilization) in the style of the current one, on the same lot,
+	 * with one of Definitions. A building that cannot be rebuilt there is
+	 * left as it was. Heritage buildings and the player's buildings are never
+	 * touched. Every new building passes the same checks as one that grows.
+	 * @return the number of buildings rebuilt.
+	 */
+	int32 RenewBuildings(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxRenewals);
+
+	/** Number of grown buildings that a renewal would rebuild. */
+	int32 CountOutdated() const;
+
+	/** Lists a building as heritage, or takes it off the list. False if there is no such building. */
+	bool SetHeritage(int32 BuildingId, bool bHeritage);
+
+	int32 CountHeritage() const;
+
+	/**
 	 * Removes the buildings of the given segments whose lot no longer exists
 	 * or was given another zone. Returns the number removed.
 	 */
@@ -100,6 +126,9 @@ private:
 	 * @param bPlayerPlaced true for a service: the zone of the cells and the land value are ignored.
 	 * @return the id of the new building, or INDEX_NONE.
 	 */
+	/** Tries the definitions of the anchor's zone in weighted random order until one fits. Returns the new id or INDEX_NONE. */
+	int32 TryGrowOnAnchor(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random);
+
 	int32 TryPlace(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules, bool bPlayerPlaced);
 
 	void AddBuilding(const FChronoBuilding& Building);
@@ -113,6 +142,10 @@ private:
 	static FIntPoint GetBucket(const FVector2D& Point);
 
 	TMap<int32, FChronoBuilding> Buildings;
+
+	/** Style of the buildings created from now on. */
+	FName CurrentCivilization = NAME_None;
+	int32 CurrentEra = 0;
 
 	/** Cells covered by a lot, by cell key. */
 	TMap<int64, int32> OccupiedCells;

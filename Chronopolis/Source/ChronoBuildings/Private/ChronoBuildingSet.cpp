@@ -108,6 +108,66 @@ bool FChronoBuildingSet::OverlapsExistingBuilding(const FChronoOrientedBox2D& Fo
 	return false;
 }
 
+bool FChronoBuildingAvailability::AllowsOnItsOwn(const FChronoBuildingDefData& Definition) const
+{
+	if (!bRestricted)
+	{
+		// Nothing restricted: every building of every civilization and era,
+		// except the ones that only exist to replace another.
+		return Definition.Civilization == NAME_None;
+	}
+
+	return (Definition.Civilization == NAME_None || Definition.Civilization == Civilization)
+		&& Era >= Definition.MinEra && Era <= Definition.MaxEra
+		&& (Definition.RequiredUnlock == NAME_None || Unlocked.Contains(Definition.RequiredUnlock));
+}
+
+bool FChronoBuildingAvailability::Allows(const FChronoBuildingDefData& Definition, TConstArrayView<FChronoBuildingDefData> AllDefinitions) const
+{
+	if (!AllowsOnItsOwn(Definition))
+	{
+		return false;
+	}
+
+	// A building of every civilization gives way to this civilization's own
+	// version of it, while that version is available.
+	if (Definition.Civilization == NAME_None && Civilization != NAME_None)
+	{
+		for (const FChronoBuildingDefData& Other : AllDefinitions)
+		{
+			if (Other.Replaces == Definition.DefId && Other.Civilization == Civilization && AllowsOnItsOwn(Other))
+			{
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+void FChronoBuildingAvailability::Filter(TConstArrayView<FChronoBuildingDefData> AllDefinitions, TArray<FChronoBuildingDefData>& OutDefinitions) const
+{
+	OutDefinitions.Reset();
+	for (const FChronoBuildingDefData& Definition : AllDefinitions)
+	{
+		if (Allows(Definition, AllDefinitions))
+		{
+			OutDefinitions.Add(Definition);
+		}
+	}
+}
+
+const FChronoBuildingDefData* FChronoBuildingAvailability::Resolve(FName RequestedId, TConstArrayView<FChronoBuildingDefData> AllDefinitions) const
+{
+	for (const FChronoBuildingDefData& Definition : AllDefinitions)
+	{
+		if ((Definition.DefId == RequestedId || (Definition.Replaces == RequestedId && Definition.Replaces != NAME_None)) && Allows(Definition, AllDefinitions))
+		{
+			return &Definition;
+		}
+	}
+	return nullptr;
+}
+
 void FChronoBuildingSet::AddBuilding(const FChronoBuilding& Building)
 {
 	Buildings.Add(Building.Id, Building);
@@ -241,7 +301,6 @@ int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightf
 	Anchors.Sort();
 
 	int32 NumCreated = 0;
-	TArray<int32> Fitting;
 
 	// A few attempts per wanted building: some anchors have no definition that fits.
 	const int32 MaxAttempts = MaxNewBuildings * 8;
@@ -261,46 +320,154 @@ int32 FChronoBuildingSet::Grow(const FChronoZoneGrid& Grid, const FChronoHeightf
 			continue;
 		}
 
-		// Definitions of the right zone, tried in weighted random order.
-		Fitting.Reset();
-		float TotalWeight = 0.0f;
-		for (int32 Index = 0; Index < Definitions.Num(); ++Index)
+		if (TryGrowOnAnchor(Grid, Heightfield, Graph, *Anchor, Definitions, Rules, Random) != INDEX_NONE)
 		{
-			// Services are placed by the player, never grown.
-			if (Definitions[Index].Zone == Anchor->Zone && Definitions[Index].Weight > 0.0f && Definitions[Index].Service == EChronoServiceType::None)
-			{
-				Fitting.Add(Index);
-				TotalWeight += Definitions[Index].Weight;
-			}
-		}
-
-		while (Fitting.Num() > 0)
-		{
-			float Pick = Random.FRandRange(0.0f, TotalWeight);
-			int32 Chosen = Fitting.Num() - 1;
-			for (int32 Index = 0; Index < Fitting.Num(); ++Index)
-			{
-				Pick -= Definitions[Fitting[Index]].Weight;
-				if (Pick <= 0.0f)
-				{
-					Chosen = Index;
-					break;
-				}
-			}
-
-			const FChronoBuildingDefData& Definition = Definitions[Fitting[Chosen]];
-			if (TryPlace(Grid, Heightfield, Graph, *Anchor, Definition, Rules, false) != INDEX_NONE)
-			{
-				++NumCreated;
-				break;
-			}
-
-			TotalWeight -= Definition.Weight;
-			Fitting.RemoveAt(Chosen);
+			++NumCreated;
 		}
 	}
 
 	return NumCreated;
+}
+
+int32 FChronoBuildingSet::TryGrowOnAnchor(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random)
+{
+	// Definitions of the right zone, tried in weighted random order.
+	TArray<int32, TInlineAllocator<32>> Fitting;
+	float TotalWeight = 0.0f;
+	for (int32 Index = 0; Index < Definitions.Num(); ++Index)
+	{
+		// Services are placed by the player, never grown.
+		if (Definitions[Index].Zone == Anchor.Zone && Definitions[Index].Weight > 0.0f && Definitions[Index].Service == EChronoServiceType::None)
+		{
+			Fitting.Add(Index);
+			TotalWeight += Definitions[Index].Weight;
+		}
+	}
+
+	while (Fitting.Num() > 0)
+	{
+		float Pick = Random.FRandRange(0.0f, TotalWeight);
+		int32 Chosen = Fitting.Num() - 1;
+		for (int32 Index = 0; Index < Fitting.Num(); ++Index)
+		{
+			Pick -= Definitions[Fitting[Index]].Weight;
+			if (Pick <= 0.0f)
+			{
+				Chosen = Index;
+				break;
+			}
+		}
+
+		const FChronoBuildingDefData& Definition = Definitions[Fitting[Chosen]];
+		const int32 BuildingId = TryPlace(Grid, Heightfield, Graph, Anchor, Definition, Rules, false);
+		if (BuildingId != INDEX_NONE)
+		{
+			return BuildingId;
+		}
+
+		TotalWeight -= Definition.Weight;
+		Fitting.RemoveAt(Chosen);
+	}
+	return INDEX_NONE;
+}
+
+void FChronoBuildingSet::SetStyle(FName InCivilization, int32 InEra)
+{
+	CurrentCivilization = InCivilization;
+	CurrentEra = FMath::Max(InEra, 0);
+}
+
+namespace ChronoBuildingSetPrivate
+{
+	bool IsOutdated(const FChronoBuilding& Building, FName Civilization, int32 Era)
+	{
+		return !Building.bPlayerPlaced && !Building.bHeritage
+			&& (Building.Era < Era || (Civilization != NAME_None && Building.Civilization != Civilization));
+	}
+}
+
+int32 FChronoBuildingSet::CountOutdated() const
+{
+	int32 Count = 0;
+	for (const TPair<int32, FChronoBuilding>& Pair : Buildings)
+	{
+		Count += ChronoBuildingSetPrivate::IsOutdated(Pair.Value, CurrentCivilization, CurrentEra) ? 1 : 0;
+	}
+	return Count;
+}
+
+int32 FChronoBuildingSet::RenewBuildings(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, TConstArrayView<FChronoBuildingDefData> Definitions, const FChronoBuildingRules& Rules, FRandomStream& Random, int32 MaxRenewals)
+{
+	if (MaxRenewals <= 0 || Definitions.Num() == 0)
+	{
+		return 0;
+	}
+
+	// Candidates in id order, so that the same random stream always renews the same buildings.
+	TArray<int32> Candidates;
+	for (const TPair<int32, FChronoBuilding>& Pair : Buildings)
+	{
+		if (ChronoBuildingSetPrivate::IsOutdated(Pair.Value, CurrentCivilization, CurrentEra))
+		{
+			Candidates.Add(Pair.Key);
+		}
+	}
+	Candidates.Sort();
+
+	int32 NumRenewed = 0;
+	const int32 MaxAttempts = MaxRenewals * 4;
+	for (int32 Attempt = 0; Attempt < MaxAttempts && NumRenewed < MaxRenewals && Candidates.Num() > 0; ++Attempt)
+	{
+		const int32 CandidateIndex = Random.RandRange(0, Candidates.Num() - 1);
+		const int32 OldId = Candidates[CandidateIndex];
+		Candidates.RemoveAtSwap(CandidateIndex);
+
+		// The old building makes room, the new one is tried on the same
+		// lot: it passes every check of a building that grows. If nothing
+		// fits, the old building comes back exactly as it was.
+		const FChronoBuilding Old = Buildings.FindChecked(OldId);
+		const FChronoZoneCell* Anchor = Grid.FindCellByKey(Old.SegmentId, Old.Side, Old.FirstSlot, 0);
+		if (!Anchor || Anchor->Zone != Old.Zone)
+		{
+			continue;
+		}
+
+		RemoveBuilding(OldId);
+		if (TryGrowOnAnchor(Grid, Heightfield, Graph, *Anchor, Definitions, Rules, Random) != INDEX_NONE)
+		{
+			++NumRenewed;
+		}
+		else
+		{
+			AddBuilding(Old);
+		}
+	}
+	return NumRenewed;
+}
+
+bool FChronoBuildingSet::SetHeritage(int32 BuildingId, bool bHeritage)
+{
+	FChronoBuilding* Building = Buildings.Find(BuildingId);
+	if (!Building)
+	{
+		return false;
+	}
+	if (Building->bHeritage != bHeritage)
+	{
+		Building->bHeritage = bHeritage;
+		DirtySegments.Add(Building->SegmentId);
+	}
+	return true;
+}
+
+int32 FChronoBuildingSet::CountHeritage() const
+{
+	int32 Count = 0;
+	for (const TPair<int32, FChronoBuilding>& Pair : Buildings)
+	{
+		Count += Pair.Value.bHeritage ? 1 : 0;
+	}
+	return Count;
 }
 
 int32 FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHeightfield& Heightfield, const FChronoRoadGraph& Graph, const FChronoZoneCell& Anchor, const FChronoBuildingDefData& Definition, const FChronoBuildingRules& Rules, bool bPlayerPlaced)
@@ -418,6 +585,8 @@ int32 FChronoBuildingSet::TryPlace(const FChronoZoneGrid& Grid, const FChronoHei
 	Building.Roof = Definition.Roof;
 	Building.RoofHeightCm = Definition.RoofHeightCm;
 	Building.LandValue = LandValue;
+	Building.Era = CurrentEra;
+	Building.Civilization = CurrentCivilization;
 
 	AddBuilding(Building);
 	return Building.Id;
@@ -642,8 +811,9 @@ void FChronoBuildingSet::RebuildIndices()
 bool FChronoBuildingSet::Serialize(FArchive& Ar)
 {
 	// Bump when the binary layout changes. Version 2 adds the floor count,
-	// version 3 the level and the service fields.
-	const int32 CurrentVersion = 3;
+	// version 3 the level and the service fields, version 4 the era, the
+	// civilization, the heritage flag and the current style.
+	const int32 CurrentVersion = 4;
 	// Sanity bounds on values read from a file.
 	const int32 MaxBuildings = 4 * 1024 * 1024;
 	const int32 MaxLotCells = 64;
@@ -663,6 +833,14 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 
 	Ar << NextBuildingId;
 
+	FString StyleCivilization = CurrentCivilization.ToString();
+	Ar << StyleCivilization;
+	Ar << CurrentEra;
+	if (Ar.IsLoading())
+	{
+		CurrentCivilization = StyleCivilization.IsEmpty() || StyleCivilization == TEXT("None") ? NAME_None : FName(*StyleCivilization);
+	}
+
 	// Saved in id order so that the same city always gives the same bytes.
 	TArray<int32> BuildingIds;
 	Buildings.GetKeys(BuildingIds);
@@ -676,6 +854,7 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 	{
 		FChronoBuilding Building;
 		FString DefId;
+		FString Civilization;
 		uint8 ZoneByte = 0;
 		uint8 RoofByte = 0;
 		uint8 ServiceByte = 0;
@@ -683,6 +862,7 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 		{
 			Building = Buildings.FindChecked(BuildingIds[Index]);
 			DefId = Building.DefId.ToString();
+			Civilization = Building.Civilization.ToString();
 			ZoneByte = static_cast<uint8>(Building.Zone);
 			RoofByte = static_cast<uint8>(Building.Roof);
 			ServiceByte = static_cast<uint8>(Building.Service);
@@ -711,6 +891,9 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 		Ar << ServiceByte;
 		Ar << Building.ServiceRadiusCm;
 		Ar << Building.UpkeepPerDay;
+		Ar << Building.Era;
+		Ar << Civilization;
+		Ar << Building.bHeritage;
 
 		if (Ar.IsLoading())
 		{
@@ -729,10 +912,12 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 				&& Building.Footprint.HalfExtent.X > 0.0 && Building.Footprint.HalfExtent.Y > 0.0
 				&& Building.Floors >= 1 && Building.Floors <= 400
 				&& Building.BodyHeightCm > 0.0f
-				&& Building.FoundationBottomCm <= Building.FloorHeightCm;
+				&& Building.FoundationBottomCm <= Building.FloorHeightCm
+				&& Building.Era >= 0 && Building.Era < 100;
 			if (bValid)
 			{
 				Building.DefId = FName(*DefId);
+				Building.Civilization = Civilization.IsEmpty() || Civilization == TEXT("None") ? NAME_None : FName(*Civilization);
 				Building.Zone = static_cast<EChronoZoneType>(ZoneByte);
 				Building.Roof = static_cast<EChronoRoofType>(RoofByte);
 				Building.Service = static_cast<EChronoServiceType>(ServiceByte);
@@ -743,8 +928,11 @@ bool FChronoBuildingSet::Serialize(FArchive& Ar)
 
 	if (Ar.IsLoading())
 	{
+		bValid = bValid && CurrentEra >= 0 && CurrentEra < 100;
 		if (!bValid)
 		{
+			CurrentCivilization = NAME_None;
+			CurrentEra = 0;
 			Buildings.Reset();
 			OccupiedCells.Reset();
 			Buckets.Reset();
